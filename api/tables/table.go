@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -423,9 +423,8 @@ func getEventTableWithPathManager(
 
 	result := &api_proto.GetTableResponse{}
 
-	file_store_factory := file_store.GetFileStore(config_obj)
 	rs_reader, err := result_sets.NewTimedResultSetReader(ctx,
-		file_store_factory, path_manager)
+		config_obj, path_manager)
 	if err != nil {
 		return nil, err
 	}

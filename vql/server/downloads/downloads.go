@@ -28,6 +28,7 @@ import (
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/uploads"
 	"www.velocidex.com/golang/velociraptor/utils"
+	"www.velocidex.com/golang/velociraptor/utils/files"
 	"www.velocidex.com/golang/velociraptor/vql"
 	vql_subsystem "www.velocidex.com/golang/velociraptor/vql"
 	"www.velocidex.com/golang/vfilter"
@@ -256,10 +257,17 @@ func createDownloadFile(
 			time.Second*time.Duration(timeout))
 		defer cancel()
 
+		opts := services.ContainerOptions{
+			Type:              services.FlowExport,
+			ClientId:          client_id,
+			FlowId:            flow_id,
+			StatsPath:         flow_path_manager.GetDownloadsStats(hostname, password != ""),
+			ContainerFilename: download_file,
+		}
+
 		// Report the progress as we write the container.
 		progress_reporter := reporting.NewProgressReporter(ctx, config_obj,
-			flow_path_manager.GetDownloadsStats(hostname, password != ""),
-			download_file, zip_writer)
+			download_file, opts, zip_writer)
 		defer progress_reporter.Close()
 
 		// Will also close the underlying container when done. Must be
@@ -636,9 +644,14 @@ func maybeExpandSparseFile(
 
 	scope.Log("File %v is sparse - expanding.", src)
 	logger.Debug("File %v is sparse - expanding.", src)
+
+	files.Add(src.String())
+
 	return utils.NewReadSeekReaderAdapter(&utils.RangedReader{
 		ReaderAt: utils.MakeReaderAtter(reader),
 		Index:    index,
+	}, func() {
+		files.Remove(src.String())
 	})
 }
 
@@ -786,11 +799,17 @@ func createHuntDownloadFile(
 			time.Duration(timeout)*time.Second)
 		defer cancel()
 
+		opts := services.ContainerOptions{
+			Type:   services.HuntExport,
+			HuntId: hunt_id,
+			StatsPath: hunt_path_manager.GetHuntDownloadsStats(only_combined,
+				base_filename, password != ""),
+			ContainerFilename: download_file,
+		}
+
 		// Report the progress as we write the container.
 		progress_reporter := reporting.NewProgressReporter(sub_ctx, config_obj,
-			hunt_path_manager.GetHuntDownloadsStats(only_combined,
-				base_filename, password != ""),
-			download_file, zip_writer)
+			download_file, opts, zip_writer)
 		defer progress_reporter.Close()
 
 		// Will also close the underlying container when done. Must be

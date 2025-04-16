@@ -1,6 +1,6 @@
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -142,6 +142,20 @@ func vfsFileDownloadHandler() http.Handler {
 			org_config_obj, err := org_manager.GetOrgConfig(org_id)
 			if err != nil {
 				returnError(w, 404, err.Error())
+				return
+			}
+
+			users := services.GetUserManager()
+			user_record, err := users.GetUserFromHTTPContext(r.Context())
+			if err != nil {
+				returnError(w, 403, err.Error())
+				return
+			}
+			principal := user_record.Name
+			permissions := acls.READ_RESULTS
+			perm, err := services.CheckAccess(org_config_obj, principal, permissions)
+			if !perm || err != nil {
+				returnError(w, 403, "PermissionDenied")
 				return
 			}
 
@@ -395,7 +409,7 @@ func getRows(
 		}
 
 		rs_reader, err := result_sets.NewTimedResultSetReader(
-			ctx, file_store_factory, path_manager)
+			ctx, config_obj, path_manager)
 
 		return rs_reader.Rows(ctx), rs_reader.Close, log_path, err
 

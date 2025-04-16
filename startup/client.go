@@ -5,6 +5,8 @@ import (
 
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/executor"
+	"www.velocidex.com/golang/velociraptor/executor/throttler"
+	"www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/encrypted_logs"
 	"www.velocidex.com/golang/velociraptor/services/orgs"
@@ -19,9 +21,6 @@ func StartClientServices(
 	on_error func(ctx context.Context,
 		config_obj *config_proto.Config)) (*services.Service, error) {
 
-	scope := vql_subsystem.MakeScope()
-	vql_subsystem.InstallUnimplemented(scope)
-
 	// Create a suitable service plan.
 	if config_obj.Services == nil {
 		config_obj.Services = services.ClientServicesSpec()
@@ -31,14 +30,30 @@ func StartClientServices(
 	// before we begin the comms.
 	sm := services.NewServiceManager(ctx, config_obj)
 
+	err := MaybeEnforceAllowLists(config_obj)
+	if err != nil {
+		return sm, err
+	}
+
+	scope := vql_subsystem.MakeScope()
+	scope.SetLogger(logging.NewPlainLogger(config_obj, &logging.ClientComponent))
+
+	vql_subsystem.InstallUnimplemented(scope)
+
 	// Start encrypted logs service if possible
-	err := encrypted_logs.StartEncryptedLog(sm.Ctx, sm.Wg, sm.Config)
+	err = encrypted_logs.StartEncryptedLog(sm.Ctx, sm.Wg, sm.Config)
 	if err != nil {
 		return sm, err
 	}
 
 	// Start the nanny first so we are covered from here on.
 	err = sm.Start(executor.StartNannyService)
+	if err != nil {
+		return sm, err
+	}
+
+	// Start throttling service
+	err = sm.Start(throttler.StartStatsCollectorService)
 	if err != nil {
 		return sm, err
 	}

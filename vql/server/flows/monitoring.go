@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -22,7 +22,6 @@ import (
 
 	"github.com/Velocidex/ordereddict"
 	"www.velocidex.com/golang/velociraptor/acls"
-	"www.velocidex.com/golang/velociraptor/file_store"
 	"www.velocidex.com/golang/velociraptor/paths"
 	artifact_paths "www.velocidex.com/golang/velociraptor/paths/artifacts"
 	"www.velocidex.com/golang/velociraptor/result_sets"
@@ -45,7 +44,6 @@ type MonitoringPluginArgs struct {
 	EndTime   vfilter.Any `vfilter:"optional,field=end_time,doc=Stop end events reach this time (event sources)."`
 
 	StartRow int64 `vfilter:"optional,field=start_row,doc=Start reading the result set from this row"`
-	Limit    int64 `vfilter:"optional,field=count,doc=Maximum number of clients to fetch (default unlimited)"`
 }
 
 type MonitoringPlugin struct{}
@@ -100,9 +98,8 @@ func (self MonitoringPlugin) Call(
 			return
 		}
 
-		file_store_factory := file_store.GetFileStore(config_obj)
 		reader, err := result_sets.NewTimedResultSetReader(
-			ctx, file_store_factory, path_manager)
+			ctx, config_obj, path_manager)
 		if err != nil {
 			scope.Log("monitoring: %v", err)
 			return

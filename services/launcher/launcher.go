@@ -196,7 +196,9 @@ func (self *Launcher) CompileCollectorArgs(
 		var artifact *artifacts_proto.Artifact = nil
 
 		// Batching control
-		var max_batch_wait, max_batch_rows, max_batch_row_buffer uint64
+		var local_cpu_limit float32
+		var max_batch_wait, max_batch_rows uint64
+		var max_batch_row_buffer uint64
 
 		if config_obj != nil && config_obj.Defaults != nil {
 			max_batch_rows = config_obj.Defaults.MaxRows
@@ -245,6 +247,11 @@ func (self *Launcher) CompileCollectorArgs(
 				max_batch_wait = artifact.Resources.MaxBatchWait
 			}
 
+			if artifact.Resources.CpuLimit > 0 &&
+				artifact.Resources.CpuLimit > local_cpu_limit {
+				local_cpu_limit = artifact.Resources.CpuLimit
+			}
+
 			if artifact.Resources.MaxBatchRows > max_batch_rows {
 				max_batch_rows = artifact.Resources.MaxBatchRows
 			}
@@ -256,6 +263,10 @@ func (self *Launcher) CompileCollectorArgs(
 
 		// If the spec specifies a value it overrides the artifact
 		// definition
+		if spec.CpuLimit > 0 {
+			local_cpu_limit = spec.CpuLimit
+		}
+
 		if spec.MaxBatchRows > 0 {
 			max_batch_rows = spec.MaxBatchRows
 		}
@@ -274,6 +285,10 @@ func (self *Launcher) CompileCollectorArgs(
 				spec, options)
 			if err != nil {
 				return nil, err
+			}
+
+			if local_cpu_limit > 0 {
+				vql_collector_args.CpuLimit = local_cpu_limit
 			}
 
 			vql_collector_args.MaxRow = max_batch_rows
@@ -629,6 +644,7 @@ func (self *Launcher) WriteArtifactCollectionRecord(
 		FlowRequest: &crypto_proto.FlowRequest{
 			LogBatchTime:   batch_delay,
 			MaxRows:        collector_request.MaxRows,
+			MaxLogs:        collector_request.MaxLogs,
 			MaxUploadBytes: collector_request.MaxUploadBytes,
 		},
 	}

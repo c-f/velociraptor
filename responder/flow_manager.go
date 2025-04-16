@@ -21,6 +21,7 @@ package responder
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/Velocidex/ordereddict"
@@ -52,7 +53,7 @@ type FlowManager struct {
 }
 
 func NewFlowManager(ctx context.Context,
-	config_obj *config_proto.Config) *FlowManager {
+	config_obj *config_proto.Config, client_id string) *FlowManager {
 
 	result := &FlowManager{
 		ctx:        ctx,
@@ -63,9 +64,11 @@ func NewFlowManager(ctx context.Context,
 	}
 
 	debug.RegisterProfileWriter(debug.ProfileWriterInfo{
-		Name:          "ClientFlowManager",
-		Description:   "Report the state of the client's flow manager",
+		Name: "ClientFlowManager",
+		Description: fmt.Sprintf(
+			"Report the state of the client's flow manager (%v)", client_id),
 		ProfileWriter: result.WriteProfile,
+		Categories:    []string{"Client"},
 	})
 
 	return result
@@ -80,7 +83,7 @@ func (self *FlowManager) WriteProfile(ctx context.Context,
 		output_chan <- ordereddict.NewDict().
 			Set("FlowId", flow_id).
 			Set("State", "In Flight").
-			Set("Stats", flow_context.GetStats())
+			Set("Stats", flow_context.GetStatsDicts())
 	}
 
 	for flow_id := range self.cancelled {

@@ -563,6 +563,9 @@
     type: StoredQuery
     description: Run this query over the item.
     required: true
+  - name: timeout
+    type: uint64
+    description: If specified we flush incomplete batches in this many seconds.
   platforms:
   - darwin_amd64_cgo
   - darwin_arm64_cgo
@@ -641,6 +644,20 @@
   - linux_amd64_cgo
   - windows_386_cgo
   - windows_amd64_cgo
+- name: cache_dns
+  description: Add a DNS record to the cache..
+  type: Function
+  args:
+  - name: name
+    type: string
+    description: 'The domain name to cache '
+    required: true
+  - name: ip
+    type: string
+    description: The ip of the domain
+    required: true
+  platforms:
+  - linux_amd64_cgo
 - name: cancel_flow
   description: |
     Cancels the flow.
@@ -1224,7 +1241,7 @@
     description: If set the collection will be started in the specified org.
   category: server
   metadata:
-    permissions: COLLECT_CLIENT,COLLECT_SERVER
+    permissions: COLLECT_CLIENT,COLLECT_SERVER,COLLECT_BASIC
   platforms:
   - darwin_amd64_cgo
   - darwin_arm64_cgo
@@ -1600,6 +1617,27 @@
   - linux_amd64_cgo
   - windows_386_cgo
   - windows_amd64_cgo
+- name: dedup
+  description: Dedups the query based on a column. This will suppress rows with identical
+    values for the key column
+  type: Plugin
+  args:
+  - name: key
+    type: string
+    description: A column name to use as dedup key.
+    required: true
+  - name: query
+    type: StoredQuery
+    description: Run this query to generate items.
+    required: true
+  - name: timeout
+    type: uint64
+    description: LRU expires in this much time (default 60 sec).
+  - name: size
+    type: int64
+    description: Size of the LRU cache.
+  platforms:
+  - linux_amd64_cgo
 - name: delay
   description: Executes 'query' and delays relaying the rows by the specified number
     of seconds.
@@ -1664,6 +1702,9 @@
     required: true
   - name: really_do_it
     type: bool
+  - name: sync
+    type: bool
+    description: If specified we ensure data is available immediately
   category: server
   metadata:
     permissions: DELETE_RESULTS
@@ -2089,6 +2130,10 @@
     description: Lambda function to evaluate e.g. x=>1+1 where x will be the current
       scope.
     required: true
+  - name: args
+    type: Any
+    description: An array of elements to use as args for the lambda function. If not
+      provided we pass the scope
   platforms:
   - darwin_amd64_cgo
   - darwin_arm64_cgo
@@ -2322,6 +2367,12 @@
   - darwin_arm64_cgo
   - linux_amd64_cgo
   - windows_386_cgo
+  - windows_amd64_cgo
+- name: favorites_list
+  description: List all user's favorites.
+  type: Plugin
+  platforms:
+  - linux_amd64_cgo
   - windows_amd64_cgo
 - name: favorites_save
   description: |
@@ -2718,7 +2769,7 @@
     description: Run this query for each row.
   - name: async
     type: bool
-    description: If set we run all queries asynchronously (implies workers=1000).
+    description: If set we run all queries asynchronously (implies workers=100).
   - name: workers
     type: int64
     description: Total number of asynchronous workers.
@@ -2950,6 +3001,9 @@
   - name: fan_out
     type: int64
     description: Wait for this many listeners to connect before starting the query
+  - name: description
+    type: string
+    description: A description to add to debug server
   platforms:
   - darwin_amd64_cgo
   - darwin_arm64_cgo
@@ -3395,6 +3449,12 @@
   - linux_amd64_cgo
   - windows_386_cgo
   - windows_amd64_cgo
+- name: help
+  description: Dump information about all VQL functions and plugins.
+  type: Plugin
+  platforms:
+  - linux_amd64_cgo
+  - windows_amd64_cgo
 - name: host
   description: |
     Perform a DNS resolution.
@@ -3436,6 +3496,10 @@
   - name: prefer_go
     type: bool
     description: Prefer calling the native Go implementation rather than the system.
+  - name: tracker_only
+    type: bool
+    description: Only use the dns tracker - if the IP is not known then do not attempt
+      to resolve it.
   metadata:
     permissions: MACHINE_STATE
   platforms:
@@ -3771,6 +3835,13 @@
     required: true
   - name: really_do_it
     type: bool
+  - name: workers
+    type: int64
+    description: Delete with this many workers (default 2)
+  - name: archive
+    type: bool
+    description: Set this to only archive the hunt - it will still be accessible but
+      will be hidden from the GUI
   category: server
   metadata:
     permissions: SERVER_ADMIN
@@ -4791,6 +4862,8 @@
     description: 'A SID to lookup using LookupAccountSid '
     required: true
   category: windows
+  metadata:
+    permissions: MACHINE_STATE
   platforms:
   - linux_amd64_cgo
   - windows_386_cgo
@@ -4928,7 +5001,35 @@
   - windows_386_cgo
   - windows_amd64_cgo
 - name: mail
-  description: Send Email to a remote server.
+  description: |
+    Send Email to a remote server.
+
+    This function will send an email to a remote SMTP server. The mail
+    will be sent using SMTP with TLS and authentication.
+
+    Mails will be globally rate limited (among all queries) to the
+    specified period (default 60 seconds) to prevent overloading the
+    SMTP server. For this reason it is not suitable as a way to send
+    high number of events - use it sparingly to notify on some rare
+    events.
+
+    You can either fill in the auth_username and auth_password
+    parameters directly or use the secrets service to encapsulate
+    secrets in a managed way.
+
+    You can set any headers needed - for example to send HTML email
+    set the `Content-Type` to "text/html"
+
+    ### Example
+
+    ```vql
+    SELECT mail(secret="gmail",
+                subject="Hello from Velociraptor",
+                to="user@example.com",
+                headers=dict(`Content-Type`="text/html"),
+                body="<h1>Good morning</h1><p>From Velociraptor")
+    FROM scope()
+    ```
   type: Function
   args:
   - name: to
@@ -4973,6 +5074,13 @@
     type: string
     description: As a better alternative to disable_ssl_security, allows root ca certs
       to be added here.
+  - name: secret
+    type: string
+    description: Alternatively use a secret from the secrets service. Secret must
+      be of type 'SMTP Creds'
+  - name: headers
+    type: ordereddict.Dict
+    description: A dict of headers to send.
   metadata:
     permissions: SERVER_ADMIN
   platforms:
@@ -4982,7 +5090,10 @@
   - windows_386_cgo
   - windows_amd64_cgo
 - name: mail
-  description: Send Email to a remote server.
+  description: |
+    Send Email to a remote server.
+
+    See the mail() function for more details.
   type: Plugin
   args:
   - name: to
@@ -5027,6 +5138,13 @@
     type: string
     description: As a better alternative to disable_ssl_security, allows root ca certs
       to be added here.
+  - name: secret
+    type: string
+    description: Alternatively use a secret from the secrets service. Secret must
+      be of type 'SMTP Creds'
+  - name: headers
+    type: ordereddict.Dict
+    description: A dict of headers to send.
   category: server
   platforms:
   - darwin_amd64_cgo
@@ -5289,8 +5407,8 @@
   - windows_386_cgo
   - windows_amd64_cgo
 - name: monitoring
-  description: Extract monitoring log from a client. If client_id is not specified
-    we watch the global journal which contains event logs from all clients.
+  description: |
+    Extract monitoring log from a client.
   type: Plugin
   args:
   - name: client_id
@@ -5313,9 +5431,6 @@
   - name: start_row
     type: int64
     description: Start reading the result set from this row
-  - name: count
-    type: int64
-    description: Maximum number of clients to fetch (default unlimited)
   category: server
   metadata:
     permissions: READ_RESULTS
@@ -6468,6 +6583,28 @@
   - linux_amd64_cgo
   - windows_386_cgo
   - windows_amd64_cgo
+- name: parse_pst
+  description: Parse a PST file and extract email data.
+  type: Plugin
+  args:
+  - name: filename
+    type: accessors.OSPath
+    description: The PST file to parse.
+    required: true
+  - name: FolderPath
+    type: string
+    description: The folder path to save the attachments from emails.
+  - name: accessor
+    type: string
+    description: The accessor to use
+  - name: raw
+    type: bool
+    description: If set we emit the raw message object for all objects
+  metadata:
+    permissions: FILESYSTEM_READ
+  platforms:
+  - linux_amd64_cgo
+  - windows_amd64_cgo
 - name: parse_records_with_regex
   description: |
     Parses a file with a set of regexp and yields matches as records.  The
@@ -7436,8 +7573,7 @@
   args:
   - name: pid
     type: int64
-    description: A pid to list. If this is provided we are able to operate much faster
-      by only opening a single process.
+    description: A process ID to list. If not provided list all processes.
   category: popular
   metadata:
     permissions: MACHINE_STATE
@@ -7446,6 +7582,25 @@
   - darwin_arm64_cgo
   - linux_amd64_cgo
   - windows_386_cgo
+  - windows_amd64_cgo
+- name: pst
+  description: |+
+    An accessor to open attachments in PST files.
+
+    This accessor allows opening of attachments for scanning or reading.
+
+    The OSPath used is structured in the form:
+
+    {
+      Path: "Msg/<msg_id>/Att/<attach_id>/filename",
+      DelegatePath: <path to PST file>,
+      DelegateAccessor: <accessor for PST file>
+    }
+
+
+  type: Accessor
+  platforms:
+  - linux_amd64_cgo
   - windows_amd64_cgo
 - name: query
   description: |
@@ -7934,6 +8089,8 @@
     description: Registry key path.
     required: true
   category: windows
+  metadata:
+    permissions: FILESYSTEM_WRITE
   platforms:
   - windows_386_cgo
   - windows_amd64_cgo
@@ -7946,6 +8103,8 @@
     description: Registry value path.
     required: true
   category: windows
+  metadata:
+    permissions: FILESYSTEM_WRITE
   platforms:
   - windows_386_cgo
   - windows_amd64_cgo
@@ -7969,6 +8128,8 @@
     type: bool
     description: Set to create missing intermediate keys
   category: windows
+  metadata:
+    permissions: FILESYSTEM_WRITE
   platforms:
   - windows_386_cgo
   - windows_amd64_cgo
@@ -8199,6 +8360,53 @@
   - linux_amd64_cgo
   - windows_386_cgo
   - windows_amd64_cgo
+- name: rsyslog
+  description: Send an RFC5424 compliant remote syslog message.
+  type: Function
+  version: 2
+  args:
+  - name: port
+    type: uint64
+    description: Destination port to connect to. If not specified we use 514
+  - name: protocol
+    type: string
+    description: Protocol to use, default UDP but can be TCP or TLS
+  - name: message
+    type: string
+    description: Message to log.
+    required: true
+  - name: facility
+    type: int64
+    description: Facility of this message
+  - name: severity
+    type: int64
+    description: Severity of this message
+  - name: timestamp
+    type: time.Time
+    description: Timestamp of this message, if omitted we use the current time.
+  - name: hostname
+    type: string
+    description: Hostname associated with this message. If omitted we use the current
+      hostname.
+  - name: app_name
+    type: string
+    description: Application that generated the log
+  - name: proc_id
+    type: string
+    description: Process ID that generated this log
+  - name: sd_id
+    type: string
+    description: When sending structured data, this is the Structured Data ID
+  - name: args
+    type: ordereddict.Dict
+    description: A dict to be interpolated into the message as structured data, according
+      to RFC5424.
+  - name: root_ca
+    type: string
+    description: As a better alternative to disable_ssl_security, allows root ca certs
+      to be added here.
+  platforms:
+  - linux_amd64_cgo
 - name: s3
   description: |
     Allows access to S3 buckets.
@@ -8542,7 +8750,34 @@
   - windows_386_cgo
   - windows_amd64_cgo
 - name: sigma
-  description: Evaluate sigma rules.
+  description: |
+    Evaluate sigma rules.
+
+    For a full description of this plugin see
+    * https://docs.velociraptor.app/blog/2023/2023-11-15-sigma_in_velociraptor/
+    * https://docs.velociraptor.app/blog/2024/2024-05-09-detection-engineering/
+    * https://docs.velociraptor.app/blog/2025/2025-02-02-sigma/
+
+    A Curated set of Sigma Models and rules is maintained at https://sigma.velocidex.com/
+
+    ## Extensions to the Sigma rule format.
+
+    The following extensions are supported by Velociraptor's `sigma()`
+    plugin:
+
+    1. The `vql` field can specify a VQL lambda which will be used to
+       construct or enrich the event with additional fields. This
+       happens prior to event matching so it applies on all events
+       (event ones that do not match). Therefore this section should
+       be fairly light weight.
+
+    2. The `enrichment` field specifies a VQL lambda which will be
+       used to build an enrichment object after a match is made. This
+       is used to additional infomation for the analyst to assess.
+
+    3. The `vql` modifier can be used to specify a VQL lambda that
+       will be used in a detection clause. The lambda will receive the
+       field and should return a boolean value.
   type: Plugin
   args:
   - name: rules
@@ -8735,7 +8970,7 @@
     description: Start reading the result set from this row
   - name: count
     type: int64
-    description: Maximum number of clients to fetch (default unlimited)
+    description: Maximum number of rows to fetch (default unlimited)
   - name: orgs
     type: string
     description: Run the query over these orgs. If empty use the current org.
@@ -10820,6 +11055,16 @@
   - name: description
     type: string
     description: Description for this GUID provider
+  - name: kernel_tracer_type
+    type: string
+    description: A list of event types to fetch from the kernel tracer (can be registry,
+      process, image_load, network, driver, file, thread, handle)
+    repeated: true
+  - name: kernel_tracer_stacks
+    type: string
+    description: A list of kernel tracer event types to append stack traces to (can
+      be any of the types accepted by kernel_tracer_type)
+    repeated: true
   category: event
   platforms:
   - windows_386_cgo
@@ -11152,7 +11397,7 @@
   args:
   - name: filename
     type: accessors.OSPath
-    description: CSV files to open
+    description: JSONL files to open
     required: true
   - name: accessor
     type: string
@@ -11164,6 +11409,12 @@
   - name: buffer_size
     type: int
     description: Maximum size of buffer before flushing to file.
+  - name: max_time
+    type: int
+    description: Maximum time before flushing the buffer (10 sec).
+  - name: append
+    type: bool
+    description: Append JSONL records to existing file.
   metadata:
     permissions: FILESYSTEM_WRITE
   platforms:
@@ -11260,6 +11511,9 @@
   - name: vars
     type: ordereddict.Dict
     description: The Yara variables to use.
+  - name: force_buffers
+    type: bool
+    description: Force buffer scan in all cases.
   category: parsers
   metadata:
     permissions: FILESYSTEM_READ

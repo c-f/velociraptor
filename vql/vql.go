@@ -1,6 +1,6 @@
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -94,39 +94,58 @@ func RegisterProtocol(plugin vfilter.Any) {
 }
 
 func EnforceVQLAllowList(
-	allowed_plugins []string, allowed_functions []string) error {
+	allowed_plugins []string, allowed_functions []string,
+	deny_plugins []string, deny_functions []string) error {
 
 	mu.Lock()
 	defer mu.Unlock()
 
 	base_scope := vfilter.NewScope()
 
-	exported_plugins := exportedPlugins
-	exportedPlugins = make(map[string]vfilter.PluginGeneratorInterface)
-	for _, plugin_name := range allowed_plugins {
-		impl, ok := exported_plugins[plugin_name]
-		if !ok {
-			// Maybe this is provided by the base scope.
-			impl, ok = base_scope.GetPlugin(plugin_name)
+	if len(allowed_plugins) > 0 {
+		new_exported_plugins := make(map[string]vfilter.PluginGeneratorInterface)
+		for _, plugin_name := range allowed_plugins {
+			impl, ok := exportedPlugins[plugin_name]
 			if !ok {
-				return fmt.Errorf("Unknown plugin %v", plugin_name)
+				// Maybe this is provided by the base scope.
+				impl, ok = base_scope.GetPlugin(plugin_name)
+				if !ok {
+					// Cant add it - just insert a stub
+					impl = &UnimplementedPlugin{Name: plugin_name}
+				}
 			}
+			new_exported_plugins[plugin_name] = impl
 		}
-		exportedPlugins[plugin_name] = impl
+
+		exportedPlugins = new_exported_plugins
 	}
 
-	exported_functions := exportedFunctions
-	exportedFunctions = make(map[string]vfilter.FunctionInterface)
-	for _, func_name := range allowed_functions {
-		impl, ok := exported_functions[func_name]
-		if !ok {
-			// Maybe this is provided by the base scope.
-			impl, ok = base_scope.GetFunction(func_name)
-			if !ok {
-				return fmt.Errorf("Unknown VQL Function %v", func_name)
-			}
+	for _, deny := range deny_plugins {
+		exportedPlugins[deny] = &UnimplementedPlugin{
+			Name: deny,
 		}
-		exportedFunctions[func_name] = impl
+	}
+
+	if len(allowed_functions) > 0 {
+		new_exported_functions := make(map[string]vfilter.FunctionInterface)
+		for _, func_name := range allowed_functions {
+			impl, ok := exportedFunctions[func_name]
+			if !ok {
+				// Maybe this is provided by the base scope.
+				impl, ok = base_scope.GetFunction(func_name)
+				if !ok {
+					impl = &UnimplementedFunction{Name: func_name}
+				}
+			}
+			new_exported_functions[func_name] = impl
+		}
+		exportedFunctions = new_exported_functions
+	}
+
+	for _, deny := range deny_functions {
+		exportedFunctions[deny] = &UnimplementedFunction{
+			Name: deny,
+		}
 	}
 
 	// Reset the global scope so we will be forced to recreate it.

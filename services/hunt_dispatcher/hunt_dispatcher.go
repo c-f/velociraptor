@@ -17,29 +17,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 package hunt_dispatcher
 
-// The hunt dispatcher is a local in memory cache of current active
-// hunts. As clients check in to the frontend, the server makes sure
-// there are no outstanding hunts for that client, and this needs to
-// be in memory for quick access. The hunt dispatcher refreshes the
-// hunt list periodically from the data store to receive fresh data.
-
-// In multi frontend deployments, each node (master or minion) has its
-// own hunt dispatcher, initialized from the data store. On minion
-// nodes, the hunt dispatcher is not allowed to write updates to the
-// data store, only read them.
-
-// The master's hunt dispatcher is responsible for maintaining the
-// hunt state across all nodes. In order to update a hunt's property
-// (e.g. TotalClientsScheduled etc), callers should call MutateHunt()
-// on their local node to send a mutation to the master, which will
-// actually update the hunt state.
-
-// As the hunt manager (singleton running on the master) updates the
-// hunt record, it sends the new record to the
-// Server.Internal.HuntUpdate queue, where all hunt dispatchers will
-// receive it and update their internal state. The hunt dispatcher on
-// the master will also write the new record to the data store.
-
 import (
 	"context"
 	"crypto/rand"
@@ -54,7 +31,6 @@ import (
 	"github.com/Velocidex/ordereddict"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
@@ -138,55 +114,6 @@ func (self *HuntDispatcher) participateAllConnectedClients(
 	return nil
 }
 
-func (self *HuntDispatcher) ProcessUpdate(
-	ctx context.Context,
-	config_obj *config_proto.Config,
-	row *ordereddict.Dict) error {
-
-	hunt_any, pres := row.Get("Hunt")
-	if !pres {
-		return nil
-	}
-
-	serialized, err := json.Marshal(hunt_any)
-	if err != nil {
-		return err
-	}
-
-	hunt_obj := &api_proto.Hunt{}
-	err = protojson.Unmarshal(serialized, hunt_obj)
-	if err != nil {
-		return err
-	}
-
-	// Only update the version if it is ahead.
-	self.Store.ModifyHuntObject(ctx, hunt_obj.HuntId,
-		func(existing_hunt *HuntRecord) services.HuntModificationAction {
-			if existing_hunt.Version < hunt_obj.Version {
-				existing_hunt.Hunt = hunt_obj
-				return services.HuntPropagateChanges
-			}
-			return services.HuntUnmodified
-		})
-
-	// A hunt went into the running state - we need to participate all
-	// our currently connected clients.
-	_, pres = row.Get("TriggerParticipation")
-	if pres {
-		self.participateAllConnectedClients(ctx, config_obj, hunt_obj.HuntId)
-	}
-
-	// On the master we also write it to storage.
-	if self.I_am_master {
-		err = self.Store.SetHunt(ctx, hunt_obj)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // Applies a callback on all hunts. The callback is not allowed to
 // modify the hunts since it is getting a copy of the hunt object.
 func (self *HuntDispatcher) ApplyFuncOnHunts(
@@ -207,37 +134,12 @@ func (self *HuntDispatcher) GetHunt(
 	}
 
 	hunt.Stats.AvailableDownloads, _ = availableHuntDownloadFiles(
-		self.config_obj, hunt_id)
+		ctx, self.config_obj, hunt_id)
 
 	// Normalize the hunt object
 	FindCollectedArtifacts(ctx, self.config_obj, hunt)
 
 	return hunt, true
-}
-
-// This is called by the local server to mutate the hunt
-// object. Mutations include increasing the number of clients
-// assigned, completed etc. These mutations may happen very frequently
-// and so we do not want to flush them to disk immediately. Instead we
-// push the mutations to the master node's hunt manager, where they
-// will be applied on the master node. Eventually these will end up in
-// the filesystem and possibly refreshed into this dispatcher.
-// Therefore, writers may write mutations and expect they take an
-// unspecified time to appear in the hunt details.
-func (self *HuntDispatcher) MutateHunt(
-	ctx context.Context, config_obj *config_proto.Config,
-	mutation *api_proto.HuntMutation) error {
-	journal, err := services.GetJournal(config_obj)
-	if err != nil {
-		return err
-	}
-
-	journal.PushRowsToArtifactAsync(ctx, config_obj,
-		ordereddict.NewDict().
-			Set("hunt_id", mutation.HuntId).
-			Set("mutation", mutation),
-		"Server.Internal.HuntModification")
-	return nil
 }
 
 // Modify the hunt object under lock and also inform all other
@@ -266,6 +168,7 @@ func (self *HuntDispatcher) ModifyHuntObject(
 				journal, err := services.GetJournal(self.config_obj)
 				if err == nil {
 					hunt_copy := proto.Clone(hunt_record.Hunt).(*api_proto.Hunt)
+					hunt_copy.Version = utils.GetTime().Now().UnixNano()
 
 					// Make sure these are pushed out ASAP to the
 					// other dispatchers.
@@ -285,6 +188,9 @@ func (self *HuntDispatcher) ModifyHuntObject(
 				journal, err := services.GetJournal(self.config_obj)
 				if err == nil {
 					hunt_copy := proto.Clone(hunt_record.Hunt).(*api_proto.Hunt)
+
+					// Increment the hunt version
+					hunt_copy.Version = utils.GetTime().Now().UnixNano()
 
 					// Make sure these are pushed out ASAP to the
 					// other dispatchers.
@@ -438,7 +344,7 @@ func (self *HuntDispatcher) CreateHunt(
 	if hunt.State == api_proto.Hunt_UNSET {
 		hunt.State = api_proto.Hunt_PAUSED
 
-		// IF we are creating the hunt in the running state
+		// If we are creating the hunt in the running state
 		// set it started.
 	} else if hunt.State == api_proto.Hunt_RUNNING {
 		hunt.StartTime = hunt.CreateTime
@@ -471,21 +377,14 @@ func (self *HuntDispatcher) CreateHunt(
 	return hunt, self.Store.FlushIndex(ctx)
 }
 
-func NewHuntDispatcher(
+func (self *HuntDispatcher) StartRefresh(
 	ctx context.Context,
 	wg *sync.WaitGroup,
-	config_obj *config_proto.Config) (services.IHuntDispatcher, error) {
+	config_obj *config_proto.Config) error {
 
-	service := &HuntDispatcher{
-		config_obj:  config_obj,
-		uuid:        utils.GetGUID(),
-		I_am_master: services.IsMaster(config_obj),
-		Store:       NewHuntStorageManagerImpl(config_obj),
-	}
-
-	err := service.Store.Refresh(ctx, config_obj)
+	err := self.Store.Refresh(ctx, config_obj)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// flush the hunts periodically
@@ -517,12 +416,12 @@ func NewHuntDispatcher(
 					context.Background(), 10*time.Second,
 					errors.New("HuntDispatcher: deadline reached shutting down"))
 				defer cancel()
-				service.Close(ctx)
+				self.Close(ctx)
 				return
 
 			case <-time.After(utils.Jitter(time.Duration(refresh) * time.Second)):
 				// Re-read the hunts from the data store.
-				err := service.Refresh(ctx, config_obj)
+				err := self.Refresh(ctx, config_obj)
 				if err != nil {
 					logger.Error("Unable to sync hunts: %v", err)
 				}
@@ -530,9 +429,27 @@ func NewHuntDispatcher(
 		}
 	}()
 
-	return service, journal.WatchQueueWithCB(ctx, config_obj, wg,
+	return journal.WatchQueueWithCB(ctx, config_obj, wg,
 		"Server.Internal.HuntUpdate", "HuntDispatcher",
-		service.ProcessUpdate)
+		self.ProcessUpdate)
+}
+
+func MakeHuntDispatcher(config_obj *config_proto.Config) *HuntDispatcher {
+	return &HuntDispatcher{
+		config_obj:  config_obj,
+		uuid:        utils.GetGUID(),
+		I_am_master: services.IsMaster(config_obj),
+		Store:       NewHuntStorageManagerImpl(config_obj),
+	}
+}
+
+func NewHuntDispatcher(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	config_obj *config_proto.Config) (services.IHuntDispatcher, error) {
+
+	res := MakeHuntDispatcher(config_obj)
+	return res, res.StartRefresh(ctx, wg, config_obj)
 }
 
 var (

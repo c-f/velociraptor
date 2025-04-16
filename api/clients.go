@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -33,6 +33,8 @@ import (
 func (self *ApiServer) GetClientMetadata(
 	ctx context.Context,
 	in *api_proto.GetClientRequest) (*api_proto.ClientMetadata, error) {
+
+	defer Instrument("GetClientMetadata")()
 
 	users := services.GetUserManager()
 	user_record, org_config_obj, err := users.GetUserFromContext(ctx)
@@ -88,6 +90,8 @@ func (self *ApiServer) SetClientMetadata(
 	ctx context.Context,
 	in *api_proto.SetClientMetadataRequest) (*emptypb.Empty, error) {
 
+	defer Instrument("SetClientMetadata")()
+
 	users := services.GetUserManager()
 	user_record, org_config_obj, err := users.GetUserFromContext(ctx)
 	if err != nil {
@@ -126,6 +130,8 @@ func (self *ApiServer) SetClientMetadata(
 func (self *ApiServer) GetClient(
 	ctx context.Context,
 	in *api_proto.GetClientRequest) (*api_proto.ApiClient, error) {
+
+	defer Instrument("GetClient")()
 
 	users := services.GetUserManager()
 	user_record, org_config_obj, err := users.GetUserFromContext(ctx)

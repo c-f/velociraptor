@@ -17,13 +17,14 @@ import (
 	"time"
 
 	"github.com/Velocidex/ordereddict"
-	"github.com/alitto/pond"
+	"github.com/alitto/pond/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/file_store/api"
 	"www.velocidex.com/golang/velociraptor/file_store/directory"
 	"www.velocidex.com/golang/velociraptor/logging"
+	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/services/debug"
 	"www.velocidex.com/golang/velociraptor/utils"
 )
@@ -185,9 +186,7 @@ func (self *MemcacheFileWriter) Stats() *ordereddict.Dict {
 		Set("CompletionCount", len(self.completions))
 }
 
-func (self *MemcacheFileWriter) BufferedSize() int {
-	self.mu.Lock()
-	defer self.mu.Unlock()
+func (self *MemcacheFileWriter) bufferedSize() int {
 	return self.buffer.Len()
 }
 
@@ -206,11 +205,13 @@ func (self *MemcacheFileWriter) Update(data []byte, offset int64) error {
 func (self *MemcacheFileWriter) Write(data []byte) (int, error) {
 	defer api.Instrument("write", "MemcacheFileWriter", nil)()
 
+	// Try to keep our memory use down - Try to flush the store. This
+	// has to happen without holding the lock on this writer in case
+	// this writer needs to be flushed too.
+	defer self.owner.ReduceMemoryToLimit()
+
 	self.mu.Lock()
 	defer self.mu.Unlock()
-
-	// Try to keep our memory use down - still holding the lock.
-	defer self.owner.reduceMemoryToLimit()
 
 	if self.last_flush.IsZero() {
 		self.last_flush = utils.GetTime().Now()
@@ -518,7 +519,7 @@ type MemcacheFileStore struct {
 	total_cached_bytes int64
 
 	// Pool of flusher workers
-	pool *pond.WorkerPool
+	pool pond.Pool
 
 	target_memory_use int64
 }
@@ -559,7 +560,7 @@ func NewMemcacheFileStore(
 			int(max_writers), time.Hour),
 		max_age:           time.Duration(max_age) * time.Millisecond,
 		min_age:           time.Duration(ttl) * time.Millisecond,
-		pool:              pond.New(int(max_writers), int(max_writers*10)),
+		pool:              pond.NewPool(int(max_writers)),
 		target_memory_use: target_memory_use,
 	}
 
@@ -567,9 +568,9 @@ func NewMemcacheFileStore(
 	debug.RegisterProfileWriter(debug.ProfileWriterInfo{
 		Name: fmt.Sprintf("memcache_filestore_%v",
 			utils.GetOrgId(config_obj)),
-		Description: fmt.Sprintf("Inspect the memcache writer state for %v.",
-			utils.GetOrgId(config_obj)),
+		Description:   "Inspect the memcache writer state.",
 		ProfileWriter: result.WriteProfile,
+		Categories:    []string{"Org", services.GetOrgName(config_obj), "Datastore"},
 	})
 
 	go result.Start(ctx)
@@ -692,6 +693,13 @@ func (self *MemcacheFileStore) WriteFileWithCompletion(
 	return result, nil
 }
 
+func (self *MemcacheFileStore) ReduceMemoryToLimit() error {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	return self.reduceMemoryToLimit()
+}
+
 // Ensure we stay under the memory limit by flushing writers to reduce
 // memory use. We block until enough data was released thereby pushing
 // back against any writes.
@@ -708,7 +716,7 @@ func (self *MemcacheFileStore) reduceMemoryToLimit() error {
 
 	// To reduce IO we flush larger writers first.
 	sort.Slice(sizes, func(i, j int) bool {
-		return sizes[i].BufferedSize() > sizes[j].BufferedSize()
+		return sizes[i].bufferedSize() > sizes[j].bufferedSize()
 	})
 
 	for _, w := range sizes {

@@ -123,7 +123,7 @@ func (self *NotebookManager) CreateInitialNotebook(ctx context.Context,
 			Output:            cell_req.Output,
 			Calculating:       true,
 			Type:              cell_req.Type,
-			Timestamp:         utils.GetTime().Now().Unix(),
+			Timestamp:         utils.GetTime().Now().UnixNano(),
 			CurrentVersion:    cell_req.Version,
 			AvailableVersions: cell_req.AvailableVersions,
 		}
@@ -223,7 +223,7 @@ func CalculateNotebookArtifact(
 	seen := make(map[string]bool)
 	seen_tools := make(map[string]bool)
 
-	for _, artifact_name := range out.Artifacts {
+	for idx, artifact_name := range out.Artifacts {
 		artifact, pres := global_repository.Get(ctx, config_obj, artifact_name)
 		if !pres {
 			return nil, nil, fmt.Errorf("Artifact not found: %v: %w",
@@ -269,8 +269,23 @@ func CalculateNotebookArtifact(
 		}
 
 		for _, s := range artifact.Sources {
-			new_source := &artifacts_proto.ArtifactSource{}
+			new_source := &artifacts_proto.ArtifactSource{
+				Name: s.Name,
+			}
 			res.Sources = append(res.Sources, new_source)
+
+			source_name := artifact_name
+			if new_source.Name != "" {
+				source_name += "/" + new_source.Name
+			}
+
+			// If there are too many cells we add a placeholder to
+			// allow the user to calculate them on demand. Otherwise
+			// we may overwhelm the notebook workers.
+			output := ""
+			if idx > 4 {
+				output = fmt.Sprintf("<h3>%s</h3><br>Recalculate to View", source_name)
+			}
 
 			custom_cells := false
 			for _, n := range s.Notebook {
@@ -285,11 +300,18 @@ func CalculateNotebookArtifact(
 				// No notebook specified for this source, add a
 				// default.
 
+				default_limit := int64(50)
+				if config_obj.Defaults != nil &&
+					config_obj.Defaults.NotebookDefaultNewCellRows > 0 {
+					default_limit = config_obj.Defaults.NotebookDefaultNewCellRows
+				}
+
 				switch paths.ModeNameToMode(artifact.Type) {
 				case paths.MODE_CLIENT_EVENT, paths.MODE_SERVER_EVENT:
 					new_source.Notebook = append(new_source.Notebook,
 						&artifacts_proto.NotebookSourceCell{
-							Type: "vql",
+							Type:   "vql",
+							Output: output,
 							Template: fmt.Sprintf(`
 /*
 # Events from %v
@@ -299,21 +321,22 @@ From {{ Scope "StartTime" }} to {{ Scope "EndTime" }}
 
 SELECT timestamp(epoch=_ts) AS ServerTime, *
  FROM source(start_time=StartTime, end_time=EndTime, artifact=%q)
-LIMIT 50
-`, artifact_name, artifact_name),
+LIMIT %v
+`, source_name, source_name, default_limit),
 						})
 
 				default:
 					new_source.Notebook = append(new_source.Notebook,
 						&artifacts_proto.NotebookSourceCell{
-							Type: "vql",
+							Type:   "vql",
+							Output: output,
 							Template: fmt.Sprintf(`
 /*
 # %v
 */
 SELECT * FROM source(artifact=%q)
 LIMIT 50
-`, artifact_name, artifact_name),
+`, source_name, source_name),
 						})
 				}
 			}
@@ -593,14 +616,23 @@ func updateNotebookRequests(
 	spec *flows_proto.ArtifactSpec,
 	in *api_proto.NotebookMetadata) error {
 
-	// Create a child reposity as we will need to update the artifact
-	// definitions.
+	// Create a child repository as we will need to update the
+	// artifact definitions.
 	manager, err := services.GetRepositoryManager(config_obj)
 	if err != nil {
 		return err
 	}
 
+	global_repository, err := manager.GetGlobalRepository(config_obj)
+	if err != nil {
+		return err
+	}
+
+	// The new repository is isolated but will search the global
+	// repository for any artifacts it does not know about.
 	repository := manager.NewRepository()
+	repository.SetParent(global_repository, config_obj)
+
 	_, err = repository.LoadProto(artifact, services.ArtifactOptions{})
 	if err != nil {
 		return err

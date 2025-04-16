@@ -1,6 +1,6 @@
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -704,5 +704,6 @@ func init() {
 		Name:          "ZipTracker",
 		Description:   "Reference counting for open Zip files",
 		ProfileWriter: tracker.ProfileWriter,
+		Categories:    []string{"Global", "VQL", "Plugins"},
 	})
 }

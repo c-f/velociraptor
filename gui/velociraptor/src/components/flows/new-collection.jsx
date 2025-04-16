@@ -458,7 +458,6 @@ class NewCollectionResources extends React.Component {
         return max_mbytes.toFixed(2) + " Mb";
     }
 
-
     getMaxRows = (artifacts) => {
         let max_rows = 0;
         _.each(artifacts, (definition) => {
@@ -548,7 +547,7 @@ class NewCollectionResources extends React.Component {
                     <Col sm="8">
                       <ValidatedInteger
                         placeholder={this.getCpuLimit(this.props.artifacts)}
-                        value={resources.cpu_limit}
+                        value={resources.cpu_limit || undefined}
                         valid_func={value=>value >= 0 && value <=100}
                         setInvalid={value => this.setState({
                             invalid_1: value})}
@@ -562,7 +561,7 @@ class NewCollectionResources extends React.Component {
                     <Col sm="8">
                       <ValidatedInteger
                         placeholder={this.getIopsLimit(this.props.artifacts)}
-                        value={resources.iops_limit}
+                        value={resources.iops_limit || undefined}
                         setInvalid={value => this.setState({invalid_1: value})}
                         setValue={value => this.props.setResources({
                             iops_limit: value
@@ -575,7 +574,7 @@ class NewCollectionResources extends React.Component {
                     <Col sm="8">
                       <ValidatedInteger
                         placeholder={this.getTimeout(this.props.artifacts)}
-                        value={resources.timeout}
+                        value={resources.timeout || undefined}
                         setInvalid={value => this.setState({invalid_2: value})}
                         setValue={value => this.props.setResources({timeout: value})} />
                     </Col>
@@ -586,7 +585,7 @@ class NewCollectionResources extends React.Component {
                     <Col sm="8">
                       <ValidatedInteger
                         placeholder={T("If set collection will be terminated after this many seconds with no progress.")}
-                        value={resources.progress_timeout}
+                        value={resources.progress_timeout || undefined}
                         setInvalid={value => this.setState({invalid_3: value})}
                         setValue={value => this.props.setResources({
                             progress_timeout: value})} />
@@ -598,18 +597,29 @@ class NewCollectionResources extends React.Component {
                     <Col sm="8">
                       <ValidatedInteger
                         placeholder={this.getMaxRows(this.props.artifacts)}
-                        value={resources.max_rows}
+                        value={resources.max_rows || undefined}
                         setInvalid={value => this.setState({invalid_4: value})}
                         setValue={value => this.props.setResources({max_rows: value})} />
                     </Col>
                   </Form.Group>
 
                   <Form.Group as={Row}>
-                    <Form.Label column sm="3">{T("Max bytes uploaded")}</Form.Label>
+                    <Form.Label column sm="3">{T("Max Logs")}</Form.Label>
+                    <Col sm="8">
+                      <ValidatedInteger
+                        placeholder={"100000"}
+                        value={resources.max_logs || undefined}
+                        setInvalid={value => this.setState({invalid_6: value})}
+                        setValue={value => this.props.setResources({max_logs: value})} />
+                    </Col>
+                  </Form.Group>
+
+                  <Form.Group as={Row}>
+                    <Form.Label column sm="3">{T("Max MB uploaded")}</Form.Label>
                     <Col sm="8">
                       <ValidatedInteger
                         placeholder={this.getMaxUploadBytes(this.props.artifacts)}
-                        value={resources.max_mbytes}
+                        value={resources.max_mbytes || undefined}
                         setInvalid={value => this.setState({invalid_5: value})}
                         setValue={value => this.props.setResources({max_mbytes: value})} />
                     </Col>
@@ -874,6 +884,7 @@ class NewCollectionWizard extends React.Component {
             timeout: request.timeout,
             progress_timeout: request.progress_timeout,
             max_rows: request.max_rows,
+            max_logs: request.max_logs,
             trace_freq_sec: request.trace_freq_sec,
             max_mbytes: Math.round(
                 request.max_upload_bytes / 1024 / 1024 * 100) / 100  || undefined,
@@ -945,6 +956,10 @@ class NewCollectionWizard extends React.Component {
             };
 
             _.each(this.state.parameters[item.name], (v, k) => {
+                if (k==="cpu_limit") {
+                    spec.cpu_limit = v;
+                    return;
+                }
                 if (k==="max_batch_wait") {
                     spec.max_batch_wait = v;
                     return;
@@ -994,6 +1009,10 @@ class NewCollectionWizard extends React.Component {
 
         if (this.state.resources.max_rows) {
             result.max_rows = this.state.resources.max_rows;
+        }
+
+        if (this.state.resources.max_logs) {
+            result.max_logs = this.state.resources.max_logs;
         }
 
         if (this.state.resources.trace_freq_sec) {

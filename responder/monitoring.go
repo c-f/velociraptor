@@ -5,12 +5,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Velocidex/ordereddict"
+	actions_proto "www.velocidex.com/golang/velociraptor/actions/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	constants "www.velocidex.com/golang/velociraptor/constants"
 	crypto_proto "www.velocidex.com/golang/velociraptor/crypto/proto"
 	"www.velocidex.com/golang/velociraptor/json"
 	"www.velocidex.com/golang/velociraptor/logging"
+	"www.velocidex.com/golang/velociraptor/services/debug"
 	"www.velocidex.com/golang/velociraptor/utils"
+	"www.velocidex.com/golang/vfilter"
 )
 
 type MonitoringManager struct {
@@ -18,6 +22,18 @@ type MonitoringManager struct {
 
 	// Key is artifact name
 	in_flight map[string]*MonitoringContext
+}
+
+func (self *MonitoringManager) WriteProfile(
+	ctx context.Context, scope vfilter.Scope,
+	output_chan chan vfilter.Row) {
+
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	for _, v := range self.in_flight {
+		output_chan <- v.Stats()
+	}
 }
 
 // Flush all the monitoring messages at the same time so they are
@@ -45,6 +61,7 @@ func (self *MonitoringManager) Context(
 		monitoring_context := &MonitoringContext{
 			output:   output,
 			artifact: artifact,
+			started:  utils.GetTime().Now(),
 		}
 		self.in_flight[artifact] = monitoring_context
 		return monitoring_context
@@ -60,7 +77,19 @@ func NewMonitoringManager(ctx context.Context) *MonitoringManager {
 
 	batch_delay := uint64(5)
 
+	info := debug.ProfileWriterInfo{
+		Name:          "Client Monitoring Manager",
+		Description:   "Report stats on client monitoring artifacts",
+		ProfileWriter: result.WriteProfile,
+		ID:            utils.GetId(),
+		Categories:    []string{"Client"},
+	}
+
+	debug.RegisterProfileWriter(info)
+
 	go func() {
+		defer debug.UnregisterProfileWriter(info.ID)
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -85,6 +114,32 @@ type MonitoringContext struct {
 	artifact          string
 
 	upload_id int64
+
+	started   time.Time
+	sent_rows uint64
+	bytes     uint64
+}
+
+func (self *MonitoringContext) Stats() *ordereddict.Dict {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	return ordereddict.NewDict().
+		Set("Artifact", self.artifact).
+		Set("Started", self.started).
+		Set("StartedAgo", utils.GetTime().Now().Sub(
+			self.started).Round(time.Second).String()).
+		Set("Logs", self.log_messages_id+self.log_message_count).
+		Set("Rows", self.sent_rows).
+		Set("JSONBytes", self.bytes)
+}
+
+func (self *MonitoringContext) ChargeResponses(response *actions_proto.VQLResponse) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	self.sent_rows += response.TotalRows
+	self.bytes += uint64(len(response.JSONLResponse))
 }
 
 func (self *MonitoringContext) NextUploadId() int64 {
@@ -132,10 +187,10 @@ func (self *MonitoringContext) AddLogMessage(
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
+	message := json.Format("{\"client_time\":%d,\"level\":%q,\"message\":%q}\n",
+		int(utils.GetTime().Now().Unix()), level, msg)
 	self.log_message_count++
-	self.log_messages = append(self.log_messages, json.Format(
-		"{\"client_time\":%d,\"level\":%q,\"message\":%q}\n",
-		int(utils.GetTime().Now().Unix()), level, msg)...)
+	self.log_messages = append(self.log_messages, message...)
 
 }
 
@@ -159,6 +214,9 @@ func (self *MonitoringContext) flushLogMessages(ctx context.Context) {
 		self.mu.Unlock()
 		return
 	}
+
+	// Include the logs in the bytes sent figure.
+	self.bytes += uint64(len(buf))
 
 	// Do not block with lock held
 	self.mu.Unlock()
@@ -220,6 +278,10 @@ func (self *MonitoringResponder) FlowContext() *FlowContext {
 
 func (self *MonitoringResponder) AddResponse(message *crypto_proto.VeloMessage) {
 	message.SessionId = "F.Monitoring"
+
+	if message.VQLResponse != nil {
+		self.monitoring_context.ChargeResponses(message.VQLResponse)
+	}
 
 	select {
 	case <-self.ctx.Done():

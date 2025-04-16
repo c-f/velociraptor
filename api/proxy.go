@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -329,6 +329,14 @@ func GetAPIHandler(
 
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
+	}
+
+	// Allow the receive limit to be increased.
+	if config_obj.ApiConfig != nil &&
+		config_obj.ApiConfig.MaxGrpcRecvSize > 0 {
+		opts = append(opts,
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(
+				int(config_obj.ApiConfig.MaxGrpcRecvSize))))
 	}
 
 	bind_addr := grpc_client.GetAPIConnectionString(config_obj)

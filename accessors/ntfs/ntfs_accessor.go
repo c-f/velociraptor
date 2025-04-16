@@ -3,7 +3,7 @@ package ntfs
 // This is an accessor which represents an NTFS filesystem
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -38,6 +38,7 @@ import (
 	"www.velocidex.com/golang/velociraptor/json"
 	"www.velocidex.com/golang/velociraptor/uploads"
 	"www.velocidex.com/golang/velociraptor/utils"
+	"www.velocidex.com/golang/velociraptor/utils/files"
 	"www.velocidex.com/golang/vfilter"
 )
 
@@ -384,13 +385,17 @@ func (self *NTFSFileSystemAccessor) OpenWithOSPath(
 			return nil, err
 		}
 
+		files.Add(device.String())
+
 		reader, err := ntfs.NewPagedReader(
 			utils.MakeReaderAtter(file), 0x1000, 10000)
 		if err != nil {
 			return nil, err
 		}
 
-		return utils.NewReadSeekReaderAdapter(reader), nil
+		return utils.NewReadSeekReaderAdapter(reader, func() {
+			files.Remove(device.String())
+		}), nil
 
 	}
 

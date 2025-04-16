@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/Velocidex/ordereddict"
 	"github.com/Velocidex/sigma-go"
@@ -26,6 +28,14 @@ type SigmaExecutionContext struct {
 	// Rules consumed by correlations - must be run in order
 	correlations     []*evaluator.VQLRuleEvaluator
 	non_correlations []*evaluator.VQLRuleEvaluator
+
+	active      bool
+	eval_time   int64
+	event_count uint64
+}
+
+func (self *SigmaExecutionContext) ChargeTime(ns int64) {
+	atomic.AddInt64(&self.eval_time, ns)
 }
 
 // Break down the rules into two separate lists - correlations are run
@@ -40,18 +50,88 @@ func (self *SigmaExecutionContext) balance() {
 	}
 }
 
+// Start the evaluation loop - start the query and consume events from it.
+func (self *SigmaExecutionContext) Start(
+	ctx context.Context, scope vfilter.Scope, output_chan chan vfilter.Row,
+	pool *workerPool, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	subscope := scope.Copy()
+	self.balance()
+
+	defer subscope.Close()
+
+	start := utils.GetTime().Now()
+
+	self.active = true
+	defer func() {
+		scope.Log("INFO:sigma: Consumed %v messages from log source %v on %v rules (%v)",
+			atomic.LoadUint64(&self.event_count), self.Name, len(self.rules),
+			utils.GetTime().Now().Sub(start))
+		self.active = false
+	}()
+
+	query_log := actions.QueryLog.AddQuery(
+		vfilter.FormatToString(subscope, self.query))
+	defer query_log.Close()
+
+	for row := range self.query.Eval(ctx, subscope) {
+		atomic.AddUint64(&self.event_count, 1)
+
+		row_dict := toDict(subscope, row)
+
+		// Evalute the row with all relevant
+		// rules. Correlations are evaluted inline because
+		// they need to be ordered.
+		if len(self.correlations) > 0 {
+			pool.RunInline(self, ctx, subscope,
+				evaluator.NewEvent(row_dict), self.correlations)
+		}
+
+		// Evaluate the rest of the rules in parallel.
+		if len(self.non_correlations) > 0 {
+			pool.Run(self, ctx, subscope,
+				evaluator.NewEvent(row_dict),
+				self.non_correlations)
+		}
+	}
+}
+
+func (self *SigmaExecutionContext) ProfileWriter(ctx context.Context,
+	scope vfilter.Scope, output_chan chan vfilter.Row) {
+
+	for _, rule := range self.rules {
+		if !self.active {
+			continue
+		}
+
+		eval_time := time.Duration(atomic.LoadInt64(&self.eval_time)).
+			Round(time.Millisecond).String()
+
+		stats := ordereddict.NewDict().
+			Set("LogSource", self.Name).
+			Set("Rules", len(self.rules)).
+			Set("EvalTime", eval_time).
+			Set("Events", atomic.LoadUint64(&self.event_count))
+
+		output_chan <- rule.Stats(stats)
+	}
+}
+
 type SigmaContext struct {
 	runners []*SigmaExecutionContext
 
 	// Map between sigma field names to event. The lambda will be
 	// passed the event. For example EID can be the lambda
 	// x=>x.System.EventID.Value
-	fieldmappings []evaluator.FieldMappingRecord
+	fieldmappings *evaluator.FieldMappingResolver
 
 	mu          sync.Mutex
 	debug       bool
 	total_rules int
 	hit_count   int
+	id          uint64
 
 	pool *workerPool
 
@@ -78,56 +158,31 @@ func (self *SigmaContext) IncHitCount() {
 func (self *SigmaContext) Rows(
 	ctx context.Context, scope types.Scope) chan vfilter.Row {
 
+	// Start all the log sources now.
 	for _, runner := range self.runners {
-		subscope := scope.Copy()
-		runner.balance()
-
 		self.wg.Add(1)
-		go func(runner *SigmaExecutionContext) {
-			defer self.wg.Done()
-			defer subscope.Close()
-
-			count := 0
-			start := utils.GetTime().Now()
-
-			defer func() {
-				scope.Log("INFO:sigma: Consumed %v messages from log source %v on %v rules (%v)",
-					count, runner.Name, len(runner.rules),
-					utils.GetTime().Now().Sub(start))
-			}()
-
-			query_log := actions.QueryLog.AddQuery(
-				vfilter.FormatToString(subscope, runner.query))
-			defer query_log.Close()
-
-			for row := range runner.query.Eval(ctx, subscope) {
-				count++
-
-				row_dict := toDict(subscope, row)
-
-				// Evalute the row with all relevant
-				// rules. Correlations are evaluted inline because
-				// they need to be ordered.
-				if len(runner.correlations) > 0 {
-					self.pool.RunInline(ctx, subscope,
-						evaluator.NewEvent(row_dict), runner.correlations)
-				}
-
-				// Evaluate the rest of the rules in parallel.
-				if len(runner.non_correlations) > 0 {
-					self.pool.Run(ctx, subscope,
-						evaluator.NewEvent(row_dict), runner.non_correlations)
-				}
-			}
-		}(runner)
+		go runner.Start(ctx, scope, self.output_chan, self.pool, &self.wg)
 	}
 
 	go func() {
 		self.wg.Wait()
+
+		// Close the channel once all the log sources are done.
 		close(self.output_chan)
 	}()
 
 	return self.output_chan
+}
+
+func (self *SigmaContext) ProfileWriter(ctx context.Context,
+	scope vfilter.Scope, output_chan chan vfilter.Row) {
+	for _, runner := range self.runners {
+		runner.ProfileWriter(ctx, scope, output_chan)
+	}
+}
+
+func (self *SigmaContext) Close() {
+	Tracker.Unregister(self)
 }
 
 func NewSigmaContext(
@@ -147,9 +202,11 @@ func NewSigmaContext(
 		output_chan:     output_chan,
 		default_details: default_details,
 		debug:           debug,
+		fieldmappings:   evaluator.NewFieldMappingResolver(),
+		id:              utils.GetId(),
 	}
 
-	// Compile the field mappings.  NOTE: The compiled_fieldmappings
+	// Compile the field mappings.  NOTE: The compiled fieldmappings
 	// is shared between all the worker goroutines. Benchmarking shows
 	// it is faster to make a slice copy than having to use a mutex to
 	// protect it. This is O(1) but lock free. Using map copies uses
@@ -167,8 +224,7 @@ func NewSigmaContext(
 			if err != nil {
 				return nil, fmt.Errorf("fieldmapping for %s is not a valid VQL Lambda: %v", k, err)
 			}
-			self.fieldmappings = append(self.fieldmappings,
-				evaluator.FieldMappingRecord{Name: k, Lambda: lambda})
+			self.fieldmappings.Set(k, lambda)
 		}
 	}
 
@@ -181,6 +237,14 @@ func NewSigmaContext(
 		log_target := parseLogSourceTarget(name)
 
 		for _, r := range rules {
+			if r.Logsource.Category == "" &&
+				r.Logsource.Product == "" &&
+				r.Logsource.Service == "" {
+				scope.Log("INFO:sigma: Error parsing rule '%v': No logsource specified",
+					r.Title)
+				continue
+			}
+
 			// Filter out correlation rules.
 			if r.Correlation == nil &&
 				matchLogSource(log_target, r) {
@@ -230,6 +294,9 @@ func NewSigmaContext(
 	}
 
 	self.pool = NewWorkerPool(ctx, &self.wg, self, output_chan)
+
+	Tracker.Register(self)
+
 	return self, nil
 }
 

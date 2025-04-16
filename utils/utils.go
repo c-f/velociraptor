@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -127,22 +127,6 @@ func BytesEqual(a []byte, b []byte) bool {
 	}
 
 	return true
-}
-
-func ToString(x interface{}) string {
-	switch t := x.(type) {
-	case string:
-		return t
-
-	case []byte:
-		return string(t)
-
-	case fmt.Stringer:
-		return t.String()
-
-	default:
-		return fmt.Sprintf("%v", x)
-	}
 }
 
 // Force coersion to int64

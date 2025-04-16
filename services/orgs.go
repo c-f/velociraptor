@@ -13,6 +13,7 @@ import (
 const (
 	ROOT_ORG_ID   = "root"
 	ROOT_ORG_NAME = "<root>"
+	RandomNonce   = ""
 )
 
 var (
@@ -65,13 +66,14 @@ type ServiceContainer interface {
 	Scheduler() (Scheduler, error)
 	SecretsService() (SecretsService, error)
 	BackupService() (BackupService, error)
+	ExportManager() (ExportManager, error)
 }
 
 // The org manager manages multi-tenancies.
 type OrgManager interface {
 	GetOrgConfig(org_id string) (*config_proto.Config, error)
 	OrgIdByNonce(nonce string) (string, error)
-	CreateNewOrg(name, id string) (*api_proto.OrgRecord, error)
+	CreateNewOrg(name, id, nonce string) (*api_proto.OrgRecord, error)
 	ListOrgs() []*api_proto.OrgRecord
 	GetOrg(org_id string) (*api_proto.OrgRecord, error)
 	DeleteOrg(ctx context.Context, principal, org_id string) error
@@ -83,10 +85,13 @@ type OrgManager interface {
 }
 
 func GetOrgName(config_obj *config_proto.Config) string {
-	if config_obj.OrgId == "" {
-		return ROOT_ORG_NAME
+	org_id := config_obj.OrgId
+	org_name := config_obj.OrgName
+
+	if org_id == "" {
+		org_id = ROOT_ORG_ID
+		org_name = ROOT_ORG_NAME
 	}
 
-	return fmt.Sprintf("Org %v (%v)",
-		config_obj.OrgName, config_obj.OrgId)
+	return fmt.Sprintf("Org %v (%v)", org_name, org_id)
 }

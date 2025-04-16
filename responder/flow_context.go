@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Velocidex/ordereddict"
 	actions_proto "www.velocidex.com/golang/velociraptor/actions/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	constants "www.velocidex.com/golang/velociraptor/constants"
@@ -34,6 +35,8 @@ type FlowContext struct {
 	// Flow wide totals
 	total_rows           uint64
 	total_uploaded_bytes uint64
+	total_logs           uint64
+	logs_disabled        bool
 
 	// Send the messages to this channel
 	output chan *crypto_proto.VeloMessage
@@ -180,9 +183,10 @@ func (self *FlowContext) ChargeRows(rows uint64) error {
 
 	self.total_rows += rows
 	if self.req.MaxRows > 0 && self.total_rows > self.req.MaxRows {
-		msg := fmt.Sprintf("Rows %v exceeded limit %v for flow %v. Cancelling.",
+		return fmt.Errorf(
+			"Rows %v exceeded limit %v for flow %v. Cancelling.",
 			self.total_rows, self.req.MaxRows, self.flow_id)
-		return errors.New(msg)
+
 	}
 	return nil
 }
@@ -349,6 +353,24 @@ func (self *FlowContext) AddLogMessage(
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
+	// Suppress logs
+	self.total_logs++
+	if self.logs_disabled {
+		return
+	}
+
+	max_logs := uint64(100000)
+	if self.req.MaxLogs > 0 {
+		max_logs = self.req.MaxLogs
+	}
+
+	if self.total_logs >= max_logs {
+		self.addLogMessage(level,
+			"Log Limit Exceeded - suppressing further logs")
+		self.logs_disabled = true
+		return
+	}
+
 	self.addLogMessage(level, msg)
 }
 
@@ -416,6 +438,39 @@ func (self *FlowContext) sendStats() {
 		case self.output <- stats:
 		}
 	}
+}
+
+func (self *FlowContext) GetStatsDicts() *ordereddict.Dict {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	query_status := []*ordereddict.Dict{}
+
+	// Fill in all the responder's stats.
+	for _, r := range self.responders {
+		status := r.GetStatus()
+
+		query_status = append(query_status, ordereddict.NewDict().
+			Set("Status", status.Status.String()).
+			Set("Error", status.ErrorMessage).
+			Set("Backtrace", status.Backtrace).
+			Set("Duration", time.Duration(status.Duration).Round(time.Second).String()).
+			Set("FirstActive", time.Unix(0, int64(status.FirstActive*1000)).
+				Format(time.RFC3339)).
+			Set("LastActive", time.Unix(0, int64(status.LastActive*1000)).
+				Format(time.RFC3339)).
+			Set("QueriesWithResponse", status.NamesWithResponse).
+			Set("ResultRows", status.ResultRows).
+			Set("LogRows", status.LogRows).
+			Set("UploadedFiles", status.UploadedFiles).
+			Set("UploadedBytes", status.UploadedBytes).
+			Set("ExpectedUploadedBytes", status.ExpectedUploadedBytes))
+	}
+
+	return ordereddict.NewDict().
+		Set("SessionId", self.flow_id).
+		Set("QueryStatus", query_status).
+		Set("FlowComplete", self.isFlowComplete())
 }
 
 func (self *FlowContext) GetStats() *crypto_proto.VeloMessage {

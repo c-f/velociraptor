@@ -13,6 +13,8 @@ import (
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	artifacts_proto "www.velocidex.com/golang/velociraptor/artifacts/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	"www.velocidex.com/golang/velociraptor/constants"
+	"www.velocidex.com/golang/velociraptor/executor/throttler"
 	"www.velocidex.com/golang/velociraptor/json"
 	"www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/paths"
@@ -59,7 +61,7 @@ func (self *NotebookWorker) ProcessUpdateRequest(
 		Input:             in.Input,
 		CellId:            in.CellId,
 		Type:              in.Type,
-		Timestamp:         utils.GetTime().Now().Unix(),
+		Timestamp:         utils.GetTime().Now().UnixNano(),
 		CurrentlyEditing:  in.CurrentlyEditing,
 		Calculating:       true,
 		Output:            "Loading ...",
@@ -100,6 +102,13 @@ func (self *NotebookWorker) ProcessUpdateRequest(
 	defer tmpl.Close()
 
 	tmpl.SetEnv("NotebookId", in.NotebookId)
+
+	// Throttle the notebook accordingly.
+	tmpl.Scope.SetContext(constants.SCOPE_QUERY_NAME,
+		fmt.Sprintf("Notebook %v", in.NotebookId))
+	t, closer := throttler.NewThrottler(ctx, tmpl.Scope, config_obj, 0, 0, 0)
+	tmpl.Scope.SetThrottler(t)
+	tmpl.Scope.AddDestructor(closer)
 
 	// Register a progress reporter so we can monitor how the
 	// template rendering is going.
@@ -213,7 +222,6 @@ func (self *NotebookWorker) updateCellContents(
 		notebook_id, cell_id, version)
 
 	output := ""
-	now := utils.GetTime().Now().Unix()
 
 	cell_type = strings.ToLower(cell_type)
 
@@ -233,7 +241,7 @@ func (self *NotebookWorker) updateCellContents(
 			CellId:           cell_id,
 			Type:             cell_type,
 			Env:              env,
-			Timestamp:        now,
+			Timestamp:        utils.GetTime().Now().UnixNano(),
 			CurrentlyEditing: currently_editing,
 			Duration:         int64(time.Since(tmpl.Start).Seconds()),
 
@@ -443,7 +451,7 @@ func (self *NotebookWorker) RegisterWorker(
 
 			request := &NotebookRequest{}
 			err := json.Unmarshal([]byte(job.Job), request)
-			if err != nil {
+			if err != nil || request.NotebookCellRequest == nil {
 				logger.Error("NotebookManager: Invalid job request in worker: %v: %v",
 					err, job.Job)
 				job.Done("", err)

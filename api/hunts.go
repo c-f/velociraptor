@@ -27,6 +27,8 @@ func (self *ApiServer) GetHuntFlows(
 	ctx context.Context,
 	in *api_proto.GetTableRequest) (*api_proto.GetTableResponse, error) {
 
+	defer Instrument("GetHuntFlows")()
+
 	users := services.GetUserManager()
 	user_record, org_config_obj, err := users.GetUserFromContext(ctx)
 	if err != nil {
@@ -105,6 +107,8 @@ func (self *ApiServer) GetHuntFlows(
 func (self *ApiServer) GetHuntTable(
 	ctx context.Context,
 	in *api_proto.GetTableRequest) (*api_proto.GetTableResponse, error) {
+
+	defer Instrument("GetHuntTable")()
 
 	users := services.GetUserManager()
 	user_record, org_config_obj, err := users.GetUserFromContext(ctx)
@@ -307,7 +311,7 @@ func (self *ApiServer) CreateHunt(
 
 func (self *ApiServer) ModifyHunt(
 	ctx context.Context,
-	in *api_proto.Hunt) (*emptypb.Empty, error) {
+	in *api_proto.HuntMutation) (*emptypb.Empty, error) {
 
 	defer Instrument("ModifyHunt")()
 
@@ -319,14 +323,12 @@ func (self *ApiServer) ModifyHunt(
 	}
 	principal := user_record.Name
 
-	in.Creator = principal
-
 	permissions := acls.COLLECT_CLIENT
 	if in.State == api_proto.Hunt_RUNNING {
 		permissions = acls.START_HUNT
 	}
 
-	perm, err := services.CheckAccess(org_config_obj, in.Creator, permissions)
+	perm, err := services.CheckAccess(org_config_obj, principal, permissions)
 	if !perm || err != nil {
 		return nil, PermissionDenied(err,
 			"User is not allowed to modify hunts.")
@@ -343,7 +345,18 @@ func (self *ApiServer) ModifyHunt(
 		return nil, Status(self.verbose, err)
 	}
 
-	err = hunt_dispatcher.ModifyHunt(ctx, org_config_obj, in, in.Creator)
+	// Only allow some fields to be set by the GUI
+	mutation := &api_proto.HuntMutation{
+		HuntId:      in.HuntId,
+		State:       in.State,
+		Description: in.Description,
+		Stats:       in.Stats,
+		Expires:     in.Expires,
+		Tags:        in.Tags,
+		User:        principal,
+	}
+
+	err = hunt_dispatcher.MutateHunt(ctx, org_config_obj, mutation)
 	if err != nil {
 		return nil, Status(self.verbose, err)
 	}

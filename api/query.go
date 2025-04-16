@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -31,10 +31,10 @@ import (
 	errors "github.com/go-errors/errors"
 
 	"github.com/sirupsen/logrus"
-	"www.velocidex.com/golang/velociraptor/actions"
 	actions_proto "www.velocidex.com/golang/velociraptor/actions/proto"
 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+	"www.velocidex.com/golang/velociraptor/executor/throttler"
 	"www.velocidex.com/golang/velociraptor/logging"
 	"www.velocidex.com/golang/velociraptor/services"
 	"www.velocidex.com/golang/velociraptor/utils"
@@ -135,8 +135,10 @@ func streamQuery(
 	}
 
 	// Throttle the query if required.
-	scope.SetThrottler(
-		actions.NewThrottler(sub_ctx, scope, 0, float64(arg.CpuLimit), 0))
+	t, closer := throttler.NewThrottler(sub_ctx, scope, config_obj,
+		0, float64(arg.CpuLimit), 0)
+	scope.SetThrottler(t)
+	scope.AddDestructor(closer)
 
 	wg.Add(1)
 	go func() {
@@ -213,6 +215,10 @@ type logWriter struct {
 }
 
 func (self *logWriter) Write(b []byte) (int, error) {
+	// Sometimes the channel becomes closed for some reason and this
+	// tends to panic.
+	defer utils.CheckForPanic("logWriter.Write")
+
 	select {
 	case <-self.ctx.Done():
 		return 0, io.EOF

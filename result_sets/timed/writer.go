@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Velocidex/ordereddict"
+	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/velociraptor/file_store/api"
 	"www.velocidex.com/golang/velociraptor/json"
 	"www.velocidex.com/golang/velociraptor/paths"
@@ -35,9 +36,8 @@ type TimedResultSetWriterImpl struct {
 	rows              []rowContainer
 	total_rows_cached int
 
-	opts               *json.EncOpts
-	file_store_factory api.FileStore
-
+	opts         *json.EncOpts
+	config_obj   *config_proto.Config
 	path_manager api.PathManager
 
 	// Recalculate the writer based on the log_path to support
@@ -46,9 +46,16 @@ type TimedResultSetWriterImpl struct {
 	last_log_base string
 	writer        *timelines.TimelineWriter
 	completer     *utils.Completer
+
+	// Set for internal artifact writers to avoid writing to disk at all.
+	internal bool
 }
 
 func (self *TimedResultSetWriterImpl) Write(row *ordereddict.Dict) {
+	if self.internal {
+		return
+	}
+
 	// Encode each row ASAP but then store the raw json for combined
 	// writes. This allows us to get rid of memory from the query
 	// ASAP.
@@ -70,6 +77,10 @@ func (self *TimedResultSetWriterImpl) Write(row *ordereddict.Dict) {
 }
 
 func (self *TimedResultSetWriterImpl) WriteJSONL(jsonl []byte, count int) {
+	if self.internal {
+		return
+	}
+
 	self.rows = append(self.rows, rowContainer{
 		serialized: jsonl,
 		count:      count,
@@ -109,7 +120,8 @@ func (self *TimedResultSetWriterImpl) getWriter(ts time.Time) (
 		return nil, err
 	}
 
-	// If no path is provided, we are just a log sink
+	// If no path is provided, we are just a log sink. This is used
+	// for INTERNAL log writers.
 	if log_path == nil {
 		return nil, ignoreRowError
 	}
@@ -120,7 +132,7 @@ func (self *TimedResultSetWriterImpl) getWriter(ts time.Time) (
 	}
 
 	writer, err := timelines.NewTimelineWriter(
-		self.file_store_factory,
+		self.config_obj,
 		paths.NewTimelinePathManager(
 			log_path.Base(), log_path),
 		self.completer.GetCompletionFunc(),
@@ -151,18 +163,24 @@ func (self *TimedResultSetWriterImpl) Close() {
 }
 
 func NewTimedResultSetWriter(
-	file_store_factory api.FileStore,
+	config_obj *config_proto.Config,
 	path_manager api.PathManager,
 	opts *json.EncOpts,
 	completion func()) (result_sets.TimedResultSetWriter, error) {
 
+	log_path, err := path_manager.GetPathForWriting()
+	if err != nil {
+		return nil, err
+	}
+
 	return &TimedResultSetWriterImpl{
-		file_store_factory: file_store_factory,
-		path_manager:       path_manager,
-		opts:               opts,
+		config_obj:   config_obj,
+		path_manager: path_manager,
+		opts:         opts,
 
 		// Only call the completion function once all writes
 		// completed.
 		completer: utils.NewCompleter(completion),
+		internal:  log_path == nil,
 	}, nil
 }

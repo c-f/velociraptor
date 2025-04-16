@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/Velocidex/ordereddict"
+	"www.velocidex.com/golang/velociraptor/utils"
 	"www.velocidex.com/golang/velociraptor/vql/functions"
 	"www.velocidex.com/golang/velociraptor/vql/sigma/evaluator"
 	"www.velocidex.com/golang/vfilter"
@@ -18,6 +20,7 @@ type workerJob struct {
 	sigma_context *SigmaContext
 
 	output_chan chan types.Row
+	log_ctx     *SigmaExecutionContext
 	event       *evaluator.Event
 	rules       []*evaluator.VQLRuleEvaluator
 	scope       vfilter.Scope
@@ -26,14 +29,27 @@ type workerJob struct {
 	debug       bool
 }
 
+// Run a single pass over the ruleset.
 func (self *workerJob) Run() {
 	defer self.wg.Done()
 
+	start := utils.GetTime().Now().UnixNano()
+	defer func() {
+		self.log_ctx.ChargeTime(utils.GetTime().Now().UnixNano() - start)
+	}()
+
+	// Create a subscope for the entire evaluation chain.
+	vars := ordereddict.NewDict().Set("Event", self.event)
+	subscope := self.scope.Copy().AppendVars(vars)
+	defer subscope.Close()
+
 	for _, rule := range self.rules {
-		event := rule.MaybeEnrichWithVQL(self.ctx, self.scope, self.event)
-		match, err := rule.Match(self.ctx, self.scope, event)
+		vars.Update("Rule", rule.Rule)
+
+		event := rule.MaybeEnrichWithVQL(self.ctx, subscope, self.event)
+		match, err := rule.Match(self.ctx, subscope, event)
 		if err != nil {
-			functions.DeduplicatedLog(self.ctx, self.scope,
+			functions.DeduplicatedLog(self.ctx, subscope,
 				"While evaluating rule %v: %v", rule.Title, err)
 			continue
 		}
@@ -44,8 +60,9 @@ func (self *workerJob) Run() {
 
 		// Make a copy here because another thread might match at the same
 		// time.
+		event = rule.MaybeEnrichForReporting(self.ctx, subscope, event)
 		event_copy := self.sigma_context.AddDetail(
-			self.ctx, self.scope, event, rule)
+			self.ctx, subscope, event, rule)
 		if match.CorrelationHits == nil {
 			event_copy.Set("_Match", match)
 		} else {
@@ -75,6 +92,7 @@ type workerPool struct {
 }
 
 func (self *workerPool) RunInline(
+	log_ctx *SigmaExecutionContext,
 	ctx context.Context,
 	scope vfilter.Scope,
 	event *evaluator.Event,
@@ -83,6 +101,7 @@ func (self *workerPool) RunInline(
 	job := &workerJob{
 		sigma_context: self.sigma_context,
 		output_chan:   self.output_chan,
+		log_ctx:       log_ctx,
 		event:         event,
 		rules:         rules,
 		scope:         scope,
@@ -96,6 +115,7 @@ func (self *workerPool) RunInline(
 }
 
 func (self *workerPool) Run(
+	log_ctx *SigmaExecutionContext,
 	ctx context.Context,
 	scope vfilter.Scope,
 	event *evaluator.Event,
@@ -104,6 +124,7 @@ func (self *workerPool) Run(
 	job := &workerJob{
 		sigma_context: self.sigma_context,
 		output_chan:   self.output_chan,
+		log_ctx:       log_ctx,
 		event:         event,
 		rules:         rules,
 		scope:         scope,

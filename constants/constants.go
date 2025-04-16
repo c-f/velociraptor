@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -23,7 +23,13 @@ import (
 )
 
 const (
-	VERSION = "0.73.3"
+	VERSION = "0.74.2"
+
+	// This is the version of dependent client binaries that will be
+	// included in the offline collector or MSI. Usually this will be
+	// lockstep with the server version except for server side
+	// patches.
+	CLIENT_VERSION = VERSION
 
 	ENROLLMENT_WELL_KNOWN_FLOW   = "E:Enrol"
 	MONITORING_WELL_KNOWN_FLOW   = FLOW_PREFIX + "Monitoring"
@@ -62,6 +68,7 @@ const (
 	SCOPE_DEVICE_MANAGER    = "$device_manager"
 	SCOPE_REPOSITORY        = "$repository"
 	SCOPE_RESPONDER_CONTEXT = "_Context"
+	SCOPE_QUERY_NAME        = "$query_name"
 
 	// Artifact names from packs should start with this
 	ARTIFACT_PACK_NAME_PREFIX   = "Packs."
@@ -97,6 +104,9 @@ const (
 	EVTX_FREQUENCY      = "EVTX_FREQUENCY"
 	USN_FREQUENCY       = "USN_FREQUENCY"
 	ZIP_FILE_CACHE_SIZE = "ZIP_FILE_CACHE_SIZE"
+
+	PST_CACHE_SIZE = "PST_CACHE_SIZE"
+	PST_CACHE_TIME = "PST_CACHE_TIME"
 
 	// Used by the SSH accessor to configure access
 	SSH_CONFIG = "SSH_CONFIG"
@@ -167,6 +177,7 @@ const (
 	HTTP_SECRETS    = "HTTP Secrets"
 	SPLUNK_CREDS    = "Splunk Creds"
 	ELASTIC_CREDS   = "Elastic Creds"
+	SMTP_CREDS      = "SMTP Creds"
 
 	// The name of the annotation timeline
 	TIMELINE_ANNOTATION      = "Annotation"

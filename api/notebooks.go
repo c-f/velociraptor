@@ -55,17 +55,18 @@ func (self *ApiServer) GetNotebooks(
 	if in.IncludeTimelines {
 		// This is only called for global notebooks because client and
 		// hunt notebooks always specify the exact notebook id.
-		notebooks, err := notebook_manager.GetAllNotebooks()
+		notebooks, err := notebook_manager.GetAllNotebooks(ctx,
+			services.NotebookSearchOptions{
+				Username:  principal,
+				Timelines: true,
+			})
 		if err != nil {
 			return nil, Status(self.verbose, err)
 		}
 
 		for _, n := range notebooks {
-			if len(n.Timelines) > 0 &&
-				!notebook_manager.CheckNotebookAccess(n, principal) {
-				result.Items = append(result.Items,
-					proto.Clone(n).(*api_proto.NotebookMetadata))
-			}
+			result.Items = append(result.Items,
+				proto.Clone(n).(*api_proto.NotebookMetadata))
 
 			if uint64(len(result.Items)) > in.Count {
 				break
@@ -525,6 +526,9 @@ func (self *ApiServer) CreateNotebookDownloadFile(
 func (self *ApiServer) RemoveNotebookAttachment(
 	ctx context.Context,
 	in *api_proto.NotebookFileUploadRequest) (*emptypb.Empty, error) {
+
+	defer Instrument("RemoveNotebookAttachment")()
+
 	users := services.GetUserManager()
 	user_record, org_config_obj, err := users.GetUserFromContext(ctx)
 	if err != nil {

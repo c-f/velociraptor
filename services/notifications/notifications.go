@@ -93,6 +93,12 @@ func NewNotificationService(
 		config_obj:                config_obj,
 	}
 
+	// On clients the notifications service is local only.
+	if config_obj.Services != nil &&
+		config_obj.Services.ClientEventTable {
+		return self, nil
+	}
+
 	logger := logging.GetLogger(config_obj, &logging.FrontendComponent)
 	logger.Info("<green>Starting</> the notification service for %v.",
 		services.GetOrgName(config_obj))
@@ -154,11 +160,10 @@ func NewNotificationService(
 	}()
 
 	debug.RegisterProfileWriter(debug.ProfileWriterInfo{
-		Name: "notifier-" + utils.GetOrgId(config_obj),
-		Description: fmt.Sprintf(
-			"Information about directly connected clients for org %v.",
-			services.GetOrgName(config_obj)),
+		Name:          "notifier-" + utils.GetOrgId(config_obj),
+		Description:   "Information about directly connected clients.",
 		ProfileWriter: self.WriteProfile,
+		Categories:    []string{"Org", services.GetOrgName(config_obj), "Services"},
 	})
 
 	return self, nil

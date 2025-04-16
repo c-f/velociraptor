@@ -1,12 +1,12 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux
+// +build linux
 
 package psutils
 
 import (
 	"context"
 
-	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v4/host"
 )
 
 func PlatformInformationWithContext(ctx context.Context) (string, string, string, error) {

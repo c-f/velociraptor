@@ -12,6 +12,10 @@ type Closer interface {
 type ReadSeekReaderAdapter struct {
 	reader io.ReaderAt
 	offset int64
+	size   int64
+	eof    bool
+
+	closer func()
 }
 
 func (self ReadSeekReaderAdapter) Close() error {
@@ -25,17 +29,41 @@ func (self ReadSeekReaderAdapter) Close() error {
 
 	default:
 	}
+
+	if self.closer != nil {
+		self.closer()
+	}
+
 	return nil
 }
 
 func (self *ReadSeekReaderAdapter) Read(buf []byte) (int, error) {
+	if self.eof {
+		return 0, io.EOF
+	}
+
 	if self.offset < 0 {
 		return 0, IOError
 	}
 
+	// This read would exceed the size, so we read up to the size and
+	// flag the eof.
+	if self.size > 0 && self.offset+int64(len(buf)) > self.size {
+		buf = buf[:self.size-self.offset]
+		self.eof = true
+	}
+
 	n, err := self.reader.ReadAt(buf, self.offset)
+	if errors.Is(err, io.EOF) {
+		self.eof = true
+	}
 	self.offset += int64(n)
+
 	return n, err
+}
+
+func (self *ReadSeekReaderAdapter) SetSize(size int64) {
+	self.size = size
 }
 
 func (self *ReadSeekReaderAdapter) IsSeekable() bool {
@@ -51,6 +79,9 @@ func (self *ReadSeekReaderAdapter) Seek(offset int64, whence int) (int64, error)
 	return offset, nil
 }
 
-func NewReadSeekReaderAdapter(reader io.ReaderAt) *ReadSeekReaderAdapter {
-	return &ReadSeekReaderAdapter{reader: reader}
+func NewReadSeekReaderAdapter(reader io.ReaderAt, closer func()) *ReadSeekReaderAdapter {
+	return &ReadSeekReaderAdapter{
+		reader: reader,
+		closer: closer,
+	}
 }

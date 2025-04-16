@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -166,18 +166,20 @@ func (self *ApiServer) CollectArtifact(
 
 	// Build a request based on user input.
 	request := &flows_proto.ArtifactCollectorArgs{
-		ClientId:       in.ClientId,
-		Artifacts:      in.Artifacts,
-		Specs:          in.Specs,
-		Creator:        user_record.Name,
-		OpsPerSecond:   in.OpsPerSecond,
-		CpuLimit:       in.CpuLimit,
-		IopsLimit:      in.IopsLimit,
-		Timeout:        in.Timeout,
-		MaxRows:        in.MaxRows,
-		MaxUploadBytes: in.MaxUploadBytes,
-		Urgent:         in.Urgent,
-		TraceFreqSec:   in.TraceFreqSec,
+		ClientId:        in.ClientId,
+		Artifacts:       in.Artifacts,
+		Specs:           in.Specs,
+		Creator:         user_record.Name,
+		OpsPerSecond:    in.OpsPerSecond,
+		CpuLimit:        in.CpuLimit,
+		IopsLimit:       in.IopsLimit,
+		Timeout:         in.Timeout,
+		ProgressTimeout: in.ProgressTimeout,
+		MaxRows:         in.MaxRows,
+		MaxLogs:         in.MaxLogs,
+		MaxUploadBytes:  in.MaxUploadBytes,
+		Urgent:          in.Urgent,
+		TraceFreqSec:    in.TraceFreqSec,
 	}
 
 	acl_manager := acl_managers.NewServerACLManager(
@@ -478,14 +480,14 @@ func (self *ApiServer) SetGUIOptions(
 	ctx context.Context,
 	in *api_proto.SetGUIOptionsRequest) (*api_proto.SetGUIOptionsResponse, error) {
 
+	defer Instrument("SetGUIOptions")()
+
 	users := services.GetUserManager()
 	user_record, _, err := users.GetUserFromContext(ctx)
 	if err != nil {
 		return nil, Status(self.verbose, err)
 	}
 	principal := user_record.Name
-
-	defer Instrument("SetGUIOptions")()
 
 	// This API is only used for the user to change their own options
 	// so it is always allowed.
@@ -622,8 +624,23 @@ func (self *ApiServer) VFSGetBuffer(
 	if err != nil {
 		return nil, Status(self.verbose, err)
 	}
+
+	// The user may request to download a buffer from any org.
+	if !utils.CompareOrgIds(org_config_obj.OrgId, in.OrgId) {
+		org_manager, err := services.GetOrgManager()
+		if err != nil {
+			return nil, Status(self.verbose, err)
+		}
+
+		org_config_obj, err = org_manager.GetOrgConfig(in.OrgId)
+		if err != nil {
+			return nil, Status(self.verbose, err)
+		}
+	}
+
 	principal := user_record.Name
 
+	// Make sure the principal has permission in the org.
 	permissions := acls.READ_RESULTS
 	perm, err := services.CheckAccess(org_config_obj, principal, permissions)
 	if !perm || err != nil {

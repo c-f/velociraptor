@@ -20,7 +20,7 @@ import (
 	"www.velocidex.com/golang/vfilter"
 	"www.velocidex.com/golang/vfilter/types"
 
-	// For map[string]interface{} protocl
+	// For map[string]interface{} protocol
 	_ "www.velocidex.com/golang/velociraptor/vql/parsers"
 )
 
@@ -563,6 +563,28 @@ detection:
 					Set("Proc", 1),
 			},
 		},
+		{
+			description: "Automatic Field Mappings",
+			rule: `
+title: Automatic Field Mappings
+logsource:
+  product: windows
+  service: application
+
+detection:
+   automaticField:
+      Foo.Bar.Baz|contains: Hello
+
+   condition: automaticField
+`,
+			fieldmappings: ordereddict.NewDict(),
+			rows: []*ordereddict.Dict{
+				ordereddict.NewDict().
+					Set("Foo", ordereddict.NewDict().
+						Set("Bar", ordereddict.NewDict().
+							Set("Baz", "Hello world"))),
+			},
+		},
 	}
 )
 
@@ -582,7 +604,7 @@ func (self *SigmaTestSuite) TestSigmaModifiers() {
 	plugin := SigmaPlugin{}
 
 	for _, test_case := range sigmaTestCases {
-		if false && test_case.description != "Test Conditions" {
+		if false && test_case.description != "Automatic Field Mappings" {
 			continue
 		}
 
@@ -610,6 +632,14 @@ func (self *SigmaTestSuite) TestSigmaModifiers() {
 		}
 
 		for row := range plugin.Call(ctx, scope, args) {
+			// Ensure the plugin reports the rule that matched and the
+			// match object
+			_, pres := scope.Associative(row, "_Rule")
+			assert.True(self.T(), pres)
+
+			_, pres = scope.Associative(row, "_Match")
+			assert.True(self.T(), pres)
+
 			rows = append(rows, row)
 		}
 

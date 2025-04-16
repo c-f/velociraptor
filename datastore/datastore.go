@@ -1,6 +1,6 @@
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -107,6 +107,8 @@ type DataStore interface {
 
 	// Called to close all db handles etc. Not thread safe.
 	Close()
+
+	Healthy() error
 }
 
 func GetDB(config_obj *config_proto.Config) (DataStore, error) {

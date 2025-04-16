@@ -102,7 +102,7 @@ func (self *NotebookManagerTestSuite) TearDownTest() {
 }
 
 func (self *NotebookManagerTestSuite) TestNotebookManagerUpdateCell() {
-	assert.Retry(self.T(), 3, time.Second, self._TestNotebookManagerUpdateCell)
+	assert.Retry(self.T(), 5, time.Second, self._TestNotebookManagerUpdateCell)
 }
 
 func (self *NotebookManagerTestSuite) _TestNotebookManagerUpdateCell(r *assert.R) {
@@ -179,8 +179,9 @@ func (self *NotebookManagerTestSuite) _TestNotebookManagerUpdateCell(r *assert.R
 	assert.NoError(r, err)
 	golden.Set("Full Notebook after update", new_notebook)
 
-	goldie.Retry(r, self.T(), "TestNotebookManagerUpdateCell",
-		goldie.RemoveLines("timestamp", json.MustMarshalIndent(golden)))
+	result := normalizeOutput(json.MustMarshalIndent(golden))
+
+	goldie.Retry(r, self.T(), "TestNotebookManagerUpdateCell", result)
 }
 
 func (self *NotebookManagerTestSuite) TestNotebookManagerAlert() {
@@ -222,6 +223,10 @@ func (self *NotebookManagerTestSuite) TestNotebookManagerAlert() {
 // Test that notebooks can be initialized from a template and that
 // tools work.
 func (self *NotebookManagerTestSuite) TestNotebookFromTemplate() {
+	assert.Retry(self.T(), 5, time.Second, self._TestNotebookFromTemplate)
+}
+
+func (self *NotebookManagerTestSuite) _TestNotebookFromTemplate(r *assert.R) {
 	gen := utils.IncrementalIdGenerator(0)
 	closer := utils.SetIdGenerator(&gen)
 	defer closer()
@@ -310,8 +315,18 @@ func (self *NotebookManagerTestSuite) TestNotebookFromTemplate() {
 
 	golden.Set("UpdatedCell", updated_cell)
 
-	goldie.Assert(self.T(), "TestNotebookFromTemplate",
-		goldie.RemoveLines("timestamp", json.MustMarshalIndent(golden)))
+	// Remove things that may change
+	result := normalizeOutput(json.MustMarshalIndent(golden))
+	goldie.Retry(r, self.T(), "TestNotebookFromTemplate", result)
+}
+
+func normalizeOutput(golden []byte) []byte {
+	result := goldie.RemoveLines("timestamp", golden)
+	result = goldie.RemoveLines("created_time", result)
+	result = goldie.RemoveLines("modified_time", result)
+	result = goldie.ReplaceLines("Version%22%3A.+%7D", "Version%22%3A%7D", result)
+
+	return []byte(result)
 }
 
 func (self *NotebookManagerTestSuite) TestNotebookDeletion() {

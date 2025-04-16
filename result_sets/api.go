@@ -23,7 +23,7 @@ type ResultSetWriter interface {
 
 	// Provide a hint as to the next row id we are writing. This is
 	// only useful for some implementations of result set writers.
-	SetStartRow(start_row int64)
+	SetStartRow(start_row int64) error
 
 	// Result sets may be updated in place.
 	Update(index uint64, row *ordereddict.Dict) error
@@ -57,6 +57,7 @@ type ResultSetReader interface {
 	TotalRows() int64
 	MTime() time.Time
 	Stacker() api.FSPathSpec
+	SetStacker(stacker api.FSPathSpec)
 }
 
 type TimedResultSetReader interface {

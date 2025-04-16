@@ -3,7 +3,7 @@
 
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -289,6 +289,13 @@ func Freebsd() error {
 		arch:        "amd64"}.Run()
 }
 
+func LinuxArmhf() error {
+	return Builder{goos: "linux",
+		extra_tags: " release yara ",
+		cc:         "arm-linux-gnueabihf-gcc",
+		arch:       "arm"}.Run()
+}
+
 func Aix() error {
 	return Builder{
 		extra_tags:  " release yara ",
@@ -448,6 +455,21 @@ func Assets() error {
 	return ensure_assets()
 }
 
+// Build only essential assets
+func BasicAssets() error {
+	for _, asset := range assets {
+		if strings.Contains("gui", asset) {
+			continue
+		}
+
+		err := fileb0x(asset)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func build_gui_files() error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -570,7 +592,7 @@ func UpdateDependentTools() error {
 		return nil
 	}
 
-	v, err := semver.NewVersion(constants.VERSION)
+	v, err := semver.NewVersion(constants.CLIENT_VERSION)
 	if err != nil {
 		return err
 	}
@@ -595,7 +617,8 @@ func UpdateDependentTools() error {
 	}
 	defer outfd.Close()
 
-	data = bytes.ReplaceAll(data, []byte("<VERSION>"), []byte(constants.VERSION))
+	data = bytes.ReplaceAll(data, []byte("<VERSION>"),
+		[]byte(constants.CLIENT_VERSION))
 	data = bytes.ReplaceAll(data, []byte("<VERSION_BARE>"),
 		[]byte(fmt.Sprintf("%d.%d", v.Major(), v.Minor())))
 

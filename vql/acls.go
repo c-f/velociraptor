@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"www.velocidex.com/golang/velociraptor/acls"
+	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
 	"www.velocidex.com/golang/vfilter"
 )
 
@@ -21,6 +22,8 @@ type ACLManager interface {
 
 type OrgACLManager interface {
 	CheckAccessInOrg(org_id string, permission ...acls.ACL_PERMISSION) (bool, error)
+
+	SwitchDefaultOrg(config_obj *config_proto.Config)
 }
 
 type PrincipalACLManager interface {
@@ -52,8 +55,7 @@ func CheckAccess(scope vfilter.Scope, permissions ...acls.ACL_PERMISSION) error 
 			return fmt.Errorf("%w: Permission denied: %v",
 				acls.PermissionDenied, permissions)
 		}
-		return fmt.Errorf("%W: %v: %v",
-			acls.PermissionDenied, err, permissions)
+		return fmt.Errorf("%w: %v", err, permissions)
 	}
 
 	return nil

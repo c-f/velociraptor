@@ -4,17 +4,25 @@ import PropTypes from 'prop-types';
 
 import React, { Component } from 'react';
 import Button from 'react-bootstrap/Button';
+import Card from 'react-bootstrap/Card';
 import T from '../i8n/i8n.jsx';
 import {CancelToken} from 'axios';
 import api from '../core/api-service.jsx';
 import { JSONparse } from '../utils/json_parse.jsx';
 import Modal from 'react-bootstrap/Modal';
+import Alert from 'react-bootstrap/Alert';
 
 import Form from 'react-bootstrap/Form';
 import Row from 'react-bootstrap/Row';
 import Select from 'react-select';
 import { sprintf } from 'sprintf-js';
 import VeloAce from '../core/ace.jsx';
+import sanitize from '../core/sanitize.jsx';
+import ToolTip from '../widgets/tooltip.jsx';
+import Col from 'react-bootstrap/Col';
+
+
+import markdownit from 'markdown-it';
 
 import './sigma-editor.css';
 
@@ -74,9 +82,24 @@ class SigmaEditorDialog extends Component {
 
             } else {
                 const view = new Uint8Array(response.data);
-                let json_obj = JSONparse(
-                    String.fromCharCode.apply(null, view));
-                this.setState({profiles: json_obj});
+                let binary = '';
+                var len = view.byteLength;
+                for (var i = 0; i < len; i++) {
+                    binary += String.fromCharCode( view[ i ] );
+                }
+                let json_obj = JSONparse(binary);
+                let profiles = {};
+                _.each(json_obj, (v,k)=>{
+                    if (!_.isEmpty(v.Sources)) {
+                        profiles[k] = {
+                            FieldMappings: v.FieldMappings,
+                            Description: v.Description,
+                            Sources: v.Sources,
+                        };
+                    };
+                });
+
+                this.setState({profiles: profiles});
             }
         });
     }
@@ -300,9 +323,17 @@ details: "Field %%field_name%%"
     }
 
     renderSource = logsource=>{
+        const md = markdownit();
+        const result = md.render(logsource.description || "");
         return <>
-                 { logsource.description }
-
+                 <Card>
+                   <Card.Header>
+                     { this.state.selected_source }
+                   </Card.Header>
+                   <Card.Body>
+                     { sanitize(result) }
+                   </Card.Body>
+                 </Card>
                  <div className="sigma-editor">
                    <VeloAce
                      text={this.state.rule}
@@ -345,16 +376,33 @@ details: "Field %%field_name%%"
 
     renderProfile = profile=>{
         let selected_source = profile.Sources[this.state.selected_source];
+        let lines = (profile.Description || "").split("\n");
+        let title = lines[0];
+        let desc = "";
+        if (lines.length > 1) {
+            desc = lines.slice(1).join("\n");
+        }
         return <>
-                 { profile.Description }
-                   <Form.Group as={Row}>
+                 <Alert variant="secondary">{title}</Alert>
+                 <Form.Group as={Row}>
+                   <Form.Label column sm="3">
+                     <ToolTip tooltip={T("Log Source")}>
+                       <div>
+                         {T("Log Source")}
+                       </div>
+                     </ToolTip>
+                   </Form.Label>
+                   <Col sm="8">
+
                      <Select
                        className="sigma-profile-selector"
                        classNamePrefix="velo"
                        placeholder={T("Select Sigma Log Source")}
                        onChange={e=>this.selectSource(e.value)}
                        options={_.map(profile.Sources || {}, (v, k)=>{
-                           let desc = v.description || "";
+                           let lines = (v.description || "").split("\n");
+                           let title = lines[0];
+                           let desc = "";
                            if (desc) {
                                desc = " ( " + desc + " ) ";
                            }
@@ -363,7 +411,8 @@ details: "Field %%field_name%%"
                        })}
                        spellCheck="false"
                      />
-                   </Form.Group>
+                   </Col>
+                 </Form.Group>
                  {selected_source && this.renderSource(selected_source)}
                  </>;
     }
@@ -397,6 +446,8 @@ details: "Field %%field_name%%"
         let profiles = this.state.profiles || {};
         let selected_profile_name = this.selectedProfile();
         let selected_profile = profiles[selected_profile_name] || {};
+        let profile_desc = selected_profile.Description;
+
 
         return <Modal show={true}
                       enforceFocus={true}
@@ -407,11 +458,19 @@ details: "Field %%field_name%%"
                  <Modal.Header closeButton>
                    <Modal.Title>{T("Sigma Editor")}</Modal.Title>
                  </Modal.Header>
-                 <Modal.Body className="tool-viewer">
+                 <Modal.Body className="sigma-editor-modal">
                    <Form.Group as={Row}>
-                     <Select
-                       className="sigma-profile-selector"
-                       classNamePrefix="velo"
+                     <Form.Label column sm="3">
+                       <ToolTip tooltip={T("Sigma Model")}>
+                         <div>
+                           {T("Sigma Model")}
+                         </div>
+                       </ToolTip>
+                     </Form.Label>
+                     <Col sm="8">
+                       <Select
+                         className="sigma-profile-selector"
+                         classNamePrefix="velo"
                        placeholder={T("Select Sigma Profile")}
                        defaultValue={{value: selected_profile_name,
                                       label: selected_profile_name}}
@@ -422,9 +481,10 @@ details: "Field %%field_name%%"
                            return {value: k, label: k};
                        })}
                        spellCheck="false"
-                     />
+            />
+        </Col>
                    </Form.Group>
-                   {selected_profile.Description && this.renderProfile(selected_profile) }
+                   {profile_desc && this.renderProfile(selected_profile) }
 
                  </Modal.Body>
                  <Modal.Footer>

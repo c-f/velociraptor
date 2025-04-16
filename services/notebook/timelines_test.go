@@ -113,7 +113,7 @@ func (self *NotebookManagerTestSuite) _TestNotebookManagerTimelineAnnotations(
 	defer closer2()
 
 	// Mock out cell ID generation for tests
-	gen := utils.IncrementalIdGenerator(0)
+	gen := utils.IncrementalIdGenerator(1)
 	defer utils.SetIdGenerator(&gen)()
 
 	notebook_manager, err := services.GetNotebookManager(self.ConfigObj)
@@ -152,6 +152,31 @@ func (self *NotebookManagerTestSuite) _TestNotebookManagerTimelineAnnotations(
 	assert.NoError(t, err)
 
 	golden.Set("Notebook Metadata After Annotation", notebook_metadata)
+
+	// Check that GetAllNotebooks() returns this notebook now.
+	all_notebooks, err := notebook_manager.GetAllNotebooks(self.Ctx,
+		services.NotebookSearchOptions{
+			Username:  "admin",
+			Timelines: true,
+		})
+	assert.NoError(t, err)
+
+	if len(all_notebooks) != 1 {
+		json.Dump(all_notebooks)
+	}
+
+	assert.Equal(t, len(all_notebooks), 1)
+	assert.Equal(t, all_notebooks[0].NotebookId, notebook.NotebookId)
+
+	// Check that GetAllNotebooks() returns only notebook for this
+	// user.
+	all_notebooks, err = notebook_manager.GetAllNotebooks(self.Ctx,
+		services.NotebookSearchOptions{
+			Username:  "someuser",
+			Timelines: true,
+		})
+	assert.NoError(t, err)
+	assert.Equal(t, len(all_notebooks), 0)
 
 	read_all_events := func() (events []vfilter.Row) {
 		// Read the timeline out again.
@@ -207,7 +232,7 @@ func (self *NotebookManagerTestSuite) _TestNotebookManagerTimelineAnnotations(
 	golden.Set("Updated Annotations", read_all_events())
 
 	goldie.Retry(t, self.T(), "TestNotebookManagerTimelineAnnotations",
-		goldie.RemoveLines("_AnnotatedAt|modified_time",
+		goldie.RemoveLines("_AnnotatedAt|modified_time|cell_id|notebook_id|current_version|\"[0-9][0-9]\"",
 			json.MustMarshalIndent(golden)))
 
 }

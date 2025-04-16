@@ -1,6 +1,6 @@
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -136,7 +136,7 @@ func (self *FileBaseDataStore) SetSubjectWithCompletion(
 
 	defer InstrumentWithDelay("write", "FileBaseDataStore", urn)()
 
-	err := self.Error()
+	err := self.Healthy()
 	if err != nil {
 		return err
 	}
@@ -418,7 +418,7 @@ func (self *FileBaseDataStore) GetBuffer(
 	return readContentFromFile(self, config_obj, urn)
 }
 
-func (self *FileBaseDataStore) Error() error {
+func (self *FileBaseDataStore) Healthy() error {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
@@ -436,7 +436,7 @@ func (self *FileBaseDataStore) SetBuffer(
 	config_obj *config_proto.Config,
 	urn api.DSPathSpec, data []byte, completion func()) error {
 
-	err := self.Error()
+	err := self.Healthy()
 	if err != nil {
 		return err
 	}

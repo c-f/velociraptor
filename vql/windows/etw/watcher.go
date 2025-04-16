@@ -60,10 +60,9 @@ func (self *EventTraceWatcherService) SessionContext(
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
-	// TODO: Handle the case when an existing session has different
-	// options.
 	sessionContext, pres := self.sessions[name]
 	if !pres {
+		// Create a new session
 		sessionContext = &SessionContext{
 			name:            name,
 			registrations:   make(map[string]*Registration),
@@ -109,5 +108,6 @@ func init() {
 		Name:          "ETW",
 		Description:   "Report the current state of the ETW subsystem",
 		ProfileWriter: writeMetrics,
+		Categories:    []string{"Global", "VQL", "Plugins"},
 	})
 }

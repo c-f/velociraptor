@@ -3,7 +3,7 @@
 
 /*
    Velociraptor - Dig Deeper
-   Copyright (C) 2019-2024 Rapid7 Inc.
+   Copyright (C) 2019-2025 Rapid7 Inc.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published
@@ -40,6 +40,7 @@ import (
 	"www.velocidex.com/golang/velociraptor/acls"
 	"www.velocidex.com/golang/velociraptor/json"
 	"www.velocidex.com/golang/velociraptor/utils"
+	"www.velocidex.com/golang/velociraptor/utils/files"
 	vql_subsystem "www.velocidex.com/golang/velociraptor/vql"
 	"www.velocidex.com/golang/velociraptor/vql/windows/wmi"
 	"www.velocidex.com/golang/vfilter"
@@ -295,12 +296,26 @@ func (self OSFileSystemAccessor) OpenWithOSPath(full_path *accessors.OSPath) (
 			return nil, err
 		}
 
+		files.Add(device_name)
+
 		// Need to read the raw device in pagesize sizes
 		reader, err := ntfs.NewPagedReader(file, 0x1000, 1000)
 		if err != nil {
 			return nil, err
 		}
-		return utils.NewReadSeekReaderAdapter(reader), err
+
+		res := utils.NewReadSeekReaderAdapter(reader, func() {
+			files.Remove(device_name)
+		})
+
+		// Try to figure out the size - not necessary but in case we
+		// can we can limit readers to this size.
+		stat, err1 := os.Lstat(device_name)
+		if err1 == nil {
+			res.SetSize(stat.Size())
+		}
+
+		return res, err
 	}
 
 	filename := full_path.String()

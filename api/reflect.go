@@ -1,6 +1,6 @@
 /*
 Velociraptor - Dig Deeper
-Copyright (C) 2019-2024 Rapid7 Inc.
+Copyright (C) 2019-2025 Rapid7 Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -87,6 +87,8 @@ func IntrospectDescription() []*api_proto.Completion {
 func (self *ApiServer) GetKeywordCompletions(
 	ctx context.Context,
 	in *emptypb.Empty) (*api_proto.KeywordCompletions, error) {
+
+	defer Instrument("GetKeywordCompletions")()
 
 	users := services.GetUserManager()
 	_, org_config_obj, err := users.GetUserFromContext(ctx)
